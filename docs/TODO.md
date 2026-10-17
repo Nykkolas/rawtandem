@@ -11,6 +11,7 @@ Cases à cocher en Markdown : `[ ]` → `[x]` (cliquable aussi dans l'UI web Git
 - [ ] Déplacement des tandems : décision à prendre (destinations nommées / sélection à la volée / destination fixe), puis implémentation
 - [ ] Vue de tri : bouton pour ouvrir un autre dossier sans repasser par l'accueil
 - [ ] Vue liste (éventuellement avec aperçu) pour sauter rapidement d'une photo à l'autre, en plus de Précédent/Suivant
+- [ ] Gestion d'erreur façon Railway Oriented Programming dans le Core : `Result<'a, TandemError>` via [FsToolkit.ErrorHandling](https://github.com/demystifyfp/FsToolkit.ErrorHandling), à appliquer à l'appariement et aux plans d'opérations
 
 ## Évolutions
 

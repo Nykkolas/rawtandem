@@ -18,6 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="State.fs" />
     <Compile Include="Main.fs" />
     <Compile Include="App.fs" />
     <Compile Include="Program.fs" />

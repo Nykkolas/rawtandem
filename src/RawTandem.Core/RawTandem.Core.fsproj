@@ -5,11 +5,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="App.fs" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <PackageReference Include="Elmish" Version="5.0.2" />
+    <Compile Include="Constants.fs" />
+    <Compile Include="Navigation.fs" />
   </ItemGroup>
 
 </Project>

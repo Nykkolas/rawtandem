@@ -11,11 +11,15 @@ open Avalonia.FuncUI.DSL
 open Avalonia.FuncUI.Hosts
 open Avalonia.FuncUI.Elmish
 
-open RawTandem.Core.App
+open RawTandem.Core.Constants
+open RawTandem.UI.State
 
 // ========== Dispatch (branchement temporaire des raccourcis clavier) ==========
 // Maquette : la vue capture le dispatch pour que la fenêtre puisse traduire
-// les touches en messages. À remplacer par une subscription Elmish.
+// les touches en messages. Les messages de navigation et de suppression ne
+// s'appliquent qu'à l'écran de tri : la garde est dans `update`, donc tout
+// producteur de messages (clavier, bouton, autre front-end) est couvert.
+// À remplacer par une subscription Elmish.
 
 let mutable private currentDispatch : Msg -> unit = ignore
 
@@ -33,18 +37,17 @@ let private statusView (state: State) =
         )
     ]
 
-let private confirmationView (state: State) (dispatch: Msg -> unit) =
+let private confirmationView (action: PendingAction) (dispatch: Msg -> unit) =
     let question, confirmMsg, cancelMsg =
-        match state.PendingAction with
-        | Some(MoveRawFiles count) ->
+        match action with
+        | MoveRawFiles count ->
             sprintf "Déplacer %d RAW vers le sous-dossier « %s » ?" count RawSubfolderName,
             MoveRawsConfirmed,
             MoveRawsCancelled
-        | Some(DeleteTandem stem) ->
+        | DeleteTandem stem ->
             sprintf "Supprimer le tandem %s.JPG + %s.RW2 ?" stem stem,
             DeleteTandemConfirmed,
             DeleteTandemCancelled
-        | None -> "", MoveRawsConfirmed, MoveRawsCancelled
 
     Border.create [
         Border.dock Dock.Top
@@ -211,13 +214,15 @@ let private triagingView (state: State) (dispatch: Msg -> unit) =
 let view (state: State) (dispatch: Msg -> unit) =
     currentDispatch <- dispatch
 
-    let confirmation : Types.IView list =
-        match state.PendingAction with
-        | Some _ -> [ confirmationView state dispatch ]
-        | None -> []
+    // L'écran de confirmation se superpose à l'écran de travail d'origine :
+    // on affiche la phase sous-jacente plus la bannière si nécessaire.
+    let phase, (confirmation: Types.IView list) =
+        match state.Screen with
+        | Working phase -> phase, []
+        | Confirming(phase, action) -> phase, [ confirmationView action dispatch ]
 
     let content : Types.IView =
-        match state.Phase with
+        match phase with
         | Home -> homeView dispatch
         | Organizing -> organizingView state dispatch
         | Triaging -> triagingView state dispatch

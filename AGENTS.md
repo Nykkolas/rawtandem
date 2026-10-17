@@ -43,6 +43,23 @@
 
 ---
 
+## 🏛️ Architecture
+
+### Séparation affichage / logique métier (règle systématique)
+
+- **`src/RawTandem.Core` = domaine pur**, sans Elmish ni Avalonia : ses fonctions doivent rester vraies
+  pour un front **console, web ou GUI**. Si une fonction serait identique dans une version console,
+  elle va dans le Core.
+- **Machine à états Elmish dans l'UI** : `Msg`, `State`, `init`, `update`, champ `Status` et textes
+  français vivent dans `src/RawTandem.UI/State.fs` (ou équivalent côté front), jamais dans le Core.
+- Toute nouvelle logique métier arrive dans le Core **en TDD d'abord** (rouge/vert dans `tests/` en miroir).
+- Écran de confirmation : une action destructive en attente est un **DU d'écran** (`Confirming`),
+  pas un champ optionnel ; une confirmation sans action en attente est signalée, jamais avalée.
+- Garde des actions : un message ne s'applique qu'à son écran, la garde est dans `update`
+  (couvre tous les producteurs de messages : boutons, clavier, autres fronts).
+
+---
+
 ## F# / Elmish
 
 ### Pattern Elmish
@@ -160,6 +177,7 @@
 5. ❌ Supprimer un fichier directement (`File.Delete`) au lieu de la corbeille OS → Perte de données irréversible
 6. ❌ Comparer les extensions en tenant compte de la casse → `P1230001.jpg` et `P1230001.RW2` doivent être reconnus comme un couple
 7. ❌ Charger un RAW en mémoire pour l'affichage → latence énorme, risque de saturation mémoire
+8. ❌ Mettre `init`/`update`/`Msg` ou des textes UI dans le Core → le domaine doit rester réutilisable (console, web, GUI) ; la machine à états Elmish vit dans l'UI
 
 ---
 

@@ -32,7 +32,9 @@ Un trieur de photos qui considère chaque cliché comme **un couple JPG+RAW** :
 | Déplacement | Non décidé — la décision est attendue de l'utilisateur |
 | Sécurité des données | Le Core calcule un plan d'opérations, l'UI n'exécute que ce plan |
 | Orphelins | JPG sans RAW / RAW sans JPG : affichés et gérés explicitement (à implémenter) |
-| Architecture | Logique pure dans `src/RawTandem.Core` (Elmish, sans Avalonia) ; `src/RawTandem.UI` pour la vue ; tests Expecto dans `tests/` en miroir |
+| Architecture | `src/RawTandem.Core` = domaine pur, réutilisable par n'importe quel front (console, web, GUI), **sans Elmish ni Avalonia** ; la machine à états Elmish (`Msg`, `init`, `update`, `Status`) vit dans `src/RawTandem.UI/State.fs` ; tests Expecto dans `tests/` en miroir |
+| Confirmations | Une action destructive en attente est un écran `Confirming of Phase * PendingAction`, pas un champ optionnel : une confirmation sans action en attente est signalée à l'utilisateur, jamais avalée |
+| Garde des actions | Les messages (navigation, suppression) ne s'appliquent qu'à leur écran, la garde est dans `update` (tout producteur de messages est couvert, raccourcis clavier inclus) |
 | Raccourcis clavier | ← / → pour la navigation, `Suppr` pour demander la suppression d'un tandem |
 
 ## Hors périmètre (pour l'instant)
