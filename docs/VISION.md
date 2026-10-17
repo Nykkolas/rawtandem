@@ -23,12 +23,17 @@ Un trieur de photos qui considère chaque cliché comme **un couple JPG+RAW** :
 
 | Sujet | Décision |
 |---|---|
+| Vocabulaire | Un couple JPG+RAW s'appelle un **tandem** (UI comme code) |
 | Appariement | Même stem de nom de fichier ; extensions sans casse |
+| Emplacement après organisation | JPG à la racine du dossier, RAW dans le sous-dossier `RAW/` |
+| Workflow | 3 phases : accueil → organisation (déplacement des RAW, avec confirmation) → tri |
 | Cible RAW | `.RW2` uniquement (autres formats en évolution, voir `docs/TODO.md`) |
 | Suppression | Corbeille OS, jamais de suppression définitive |
 | Déplacement | Non décidé — la décision est attendue de l'utilisateur |
 | Sécurité des données | Le Core calcule un plan d'opérations, l'UI n'exécute que ce plan |
 | Orphelins | JPG sans RAW / RAW sans JPG : affichés et gérés explicitement (à implémenter) |
+| Architecture | Logique pure dans `src/RawTandem.Core` (Elmish, sans Avalonia) ; `src/RawTandem.UI` pour la vue ; tests Expecto dans `tests/` en miroir |
+| Raccourcis clavier | ← / → pour la navigation, `Suppr` pour demander la suppression d'un tandem |
 
 ## Hors périmètre (pour l'instant)
 

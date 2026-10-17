@@ -4,11 +4,13 @@ Cases à cocher en Markdown : `[ ]` → `[x]` (cliquable aussi dans l'UI web Git
 
 ## Fonctionnalités
 
-- [ ] Squelette de la solution : `src/RawTandem.Core` + `src/RawTandem.UI` + tests en miroir, stack Avalonia 12 / FuncUI 2 / Elmish 5 / xUnit + FsUnit, net10.0
+- [x] Squelette de la solution : `src/RawTandem.Core` + `src/RawTandem.UI` + tests en miroir, stack Avalonia 12 / FuncUI 2 / Elmish 5 / Expecto, net10.0
 - [ ] Appariement JPG+RW2 par stem de nom de fichier (TDD, dans le Core)
-- [ ] Suppression d'un couple JPG+RAW vers la corbeille OS (`gio trash` sous Linux)
-- [ ] UI minimale : choisir un dossier, visualiser un JPG, supprimer le couple
-- [ ] Déplacement des couples : décision à prendre (destinations nommées / sélection à la volée / destination fixe), puis implémentation
+- [ ] Suppression d'un tandem JPG+RAW vers la corbeille OS (`gio trash` sous Linux)
+- [ ] UI minimale : choisir un dossier, visualiser un JPG, supprimer le tandem
+- [ ] Déplacement des tandems : décision à prendre (destinations nommées / sélection à la volée / destination fixe), puis implémentation
+- [ ] Vue de tri : bouton pour ouvrir un autre dossier sans repasser par l'accueil
+- [ ] Vue liste (éventuellement avec aperçu) pour sauter rapidement d'une photo à l'autre, en plus de Précédent/Suivant
 
 ## Évolutions
 

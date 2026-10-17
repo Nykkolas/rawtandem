@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/RawTandem.Core/RawTandem.Core.fsproj" />
+    <Project Path="src/RawTandem.UI/RawTandem.UI.fsproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/RawTandem.Core.Tests/RawTandem.Core.Tests.fsproj" />
+  </Folder>
+</Solution>

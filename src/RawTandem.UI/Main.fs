@@ -1,0 +1,255 @@
+module Main
+
+open Elmish
+open Avalonia
+open Avalonia.Controls
+open Avalonia.Input
+open Avalonia.Layout
+open Avalonia.Media
+open Avalonia.FuncUI
+open Avalonia.FuncUI.DSL
+open Avalonia.FuncUI.Hosts
+open Avalonia.FuncUI.Elmish
+
+open RawTandem.Core.App
+
+// ========== Dispatch (branchement temporaire des raccourcis clavier) ==========
+// Maquette : la vue capture le dispatch pour que la fenêtre puisse traduire
+// les touches en messages. À remplacer par une subscription Elmish.
+
+let mutable private currentDispatch : Msg -> unit = ignore
+
+// ========== View helpers ==========
+
+let private statusView (state: State) =
+    Border.create [
+        Border.dock Dock.Bottom
+        Border.background Brushes.Gainsboro
+        Border.padding (Thickness(12.0, 6.0))
+        Border.child (
+            TextBlock.create [
+                TextBlock.text (if state.Status = "" then "Prêt." else state.Status)
+            ]
+        )
+    ]
+
+let private confirmationView (state: State) (dispatch: Msg -> unit) =
+    let question, confirmMsg, cancelMsg =
+        match state.PendingAction with
+        | Some(MoveRawFiles count) ->
+            sprintf "Déplacer %d RAW vers le sous-dossier « %s » ?" count RawSubfolderName,
+            MoveRawsConfirmed,
+            MoveRawsCancelled
+        | Some(DeleteTandem stem) ->
+            sprintf "Supprimer le tandem %s.JPG + %s.RW2 ?" stem stem,
+            DeleteTandemConfirmed,
+            DeleteTandemCancelled
+        | None -> "", MoveRawsConfirmed, MoveRawsCancelled
+
+    Border.create [
+        Border.dock Dock.Top
+        Border.background Brushes.Khaki
+        Border.padding (Thickness(12.0, 10.0))
+        Border.child (
+            StackPanel.create [
+                StackPanel.spacing 8.0
+                StackPanel.children [
+                    TextBlock.create [
+                        TextBlock.text question
+                        TextBlock.fontWeight FontWeight.Bold
+                    ]
+                    StackPanel.create [
+                        StackPanel.orientation Orientation.Horizontal
+                        StackPanel.spacing 8.0
+                        StackPanel.children [
+                            Button.create [
+                                Button.content "Confirmer"
+                                Button.onClick (fun _ -> dispatch confirmMsg)
+                            ]
+                            Button.create [
+                                Button.content "Annuler"
+                                Button.onClick (fun _ -> dispatch cancelMsg)
+                            ]
+                        ]
+                    ]
+                ]
+            ]
+        )
+    ]
+
+// ========== Views per phase ==========
+
+let private homeView (dispatch: Msg -> unit) =
+    StackPanel.create [
+        StackPanel.horizontalAlignment HorizontalAlignment.Center
+        StackPanel.verticalAlignment VerticalAlignment.Center
+        StackPanel.spacing 16.0
+        StackPanel.children [
+            TextBlock.create [
+                TextBlock.text "RawTandem"
+                TextBlock.fontSize 32.0
+                TextBlock.fontWeight FontWeight.Bold
+                TextBlock.horizontalAlignment HorizontalAlignment.Center
+            ]
+            TextBlock.create [
+                TextBlock.text "Triez vos photos JPG+RAW, un tandem à la fois."
+                TextBlock.horizontalAlignment HorizontalAlignment.Center
+            ]
+            Button.create [
+                Button.content "Ouvrir un dossier"
+                Button.fontSize 16.0
+                Button.padding (Thickness(16.0, 8.0))
+                Button.horizontalAlignment HorizontalAlignment.Center
+                Button.onClick (fun _ -> dispatch OpenFolderClicked)
+            ]
+            Button.create [
+                Button.content "Dossier de démonstration (maquette)"
+                Button.horizontalAlignment HorizontalAlignment.Center
+                Button.onClick (fun _ -> dispatch DemoFolderLoaded)
+            ]
+        ]
+    ]
+
+let private organizingView (state: State) (dispatch: Msg -> unit) =
+    StackPanel.create [
+        StackPanel.margin (Thickness(20.0))
+        StackPanel.spacing 12.0
+        StackPanel.children [
+            TextBlock.create [
+                TextBlock.text "Dossier chargé :"
+                TextBlock.fontWeight FontWeight.Bold
+            ]
+            TextBox.create [
+                TextBox.isReadOnly true
+                TextBox.text (defaultArg state.FolderPath "")
+            ]
+            TextBlock.create [
+                TextBlock.text (
+                    sprintf "%d tandems détectés, %d RAW à la racine." state.Photos.Length state.RawCountAtRoot
+                )
+            ]
+            Button.create [
+                Button.content (
+                    sprintf "Déplacer les %d RAW dans le sous-dossier « %s »" state.RawCountAtRoot RawSubfolderName
+                )
+                Button.isEnabled (state.RawCountAtRoot > 0)
+                Button.onClick (fun _ -> dispatch MoveRawsRequested)
+            ]
+            Button.create [
+                Button.content "Passer directement au tri"
+                Button.onClick (fun _ -> dispatch StartTriagingClicked)
+            ]
+        ]
+    ]
+
+let private triagingView (state: State) (dispatch: Msg -> unit) =
+    let photoCount = state.Photos.Length
+    let currentStem = List.tryItem state.CurrentIndex state.Photos
+
+    let viewerText =
+        match currentStem with
+        | Some stem -> sprintf "[ Visionneuse JPG — %s.JPG ]" stem
+        | None -> "Aucune photo dans ce dossier."
+
+    let counter =
+        if photoCount = 0 then "-"
+        else sprintf "%d / %d" (state.CurrentIndex + 1) photoCount
+
+    DockPanel.create [
+        DockPanel.children [
+            Button.create [
+                Button.dock Dock.Bottom
+                Button.content "Supprimer le tandem"
+                Button.foreground Brushes.Red
+                Button.fontSize 16.0
+                Button.padding (Thickness(16.0, 8.0))
+                Button.horizontalAlignment HorizontalAlignment.Center
+                Button.isEnabled (photoCount > 0)
+                Button.onClick (fun _ -> dispatch DeleteTandemRequested)
+            ]
+            StackPanel.create [
+                StackPanel.dock Dock.Bottom
+                StackPanel.orientation Orientation.Horizontal
+                StackPanel.horizontalAlignment HorizontalAlignment.Center
+                StackPanel.spacing 12.0
+                StackPanel.margin (Thickness(0.0, 12.0, 0.0, 8.0))
+                StackPanel.children [
+                    Button.create [
+                        Button.content "Précédent"
+                        Button.isEnabled (state.CurrentIndex > 0)
+                        Button.onClick (fun _ -> dispatch PreviousClicked)
+                    ]
+                    TextBlock.create [
+                        TextBlock.text counter
+                        TextBlock.verticalAlignment VerticalAlignment.Center
+                    ]
+                    Button.create [
+                        Button.content "Suivant"
+                        Button.isEnabled (state.CurrentIndex < photoCount - 1)
+                        Button.onClick (fun _ -> dispatch NextClicked)
+                    ]
+                ]
+            ]
+            Border.create [
+                Border.margin (Thickness(20.0))
+                Border.borderBrush Brushes.Gray
+                Border.borderThickness (Thickness(1.0))
+                Border.child (
+                    TextBlock.create [
+                        TextBlock.text viewerText
+                        TextBlock.fontSize 18.0
+                        TextBlock.horizontalAlignment HorizontalAlignment.Center
+                        TextBlock.verticalAlignment VerticalAlignment.Center
+                    ]
+                )
+            ]
+        ]
+    ]
+
+// ========== View ==========
+
+let view (state: State) (dispatch: Msg -> unit) =
+    currentDispatch <- dispatch
+
+    let confirmation : Types.IView list =
+        match state.PendingAction with
+        | Some _ -> [ confirmationView state dispatch ]
+        | None -> []
+
+    let content : Types.IView =
+        match state.Phase with
+        | Home -> homeView dispatch
+        | Organizing -> organizingView state dispatch
+        | Triaging -> triagingView state dispatch
+
+    DockPanel.create [
+        DockPanel.children ([ statusView state :> Types.IView ] @ confirmation @ [ content ])
+    ]
+
+// ========== Window ==========
+
+type MainWindow() as this =
+    inherit HostWindow()
+
+    do
+        base.Title <- "RawTandem"
+        base.Width <- 900.0
+        base.Height <- 640.0
+        base.WindowStartupLocation <- WindowStartupLocation.CenterScreen
+
+        this.KeyDown.Add(fun args ->
+            match args.Key with
+            | Key.Left ->
+                args.Handled <- true
+                currentDispatch PreviousClicked
+            | Key.Right ->
+                args.Handled <- true
+                currentDispatch NextClicked
+            | Key.Delete ->
+                args.Handled <- true
+                currentDispatch DeleteTandemRequested
+            | _ -> ())
+
+        Program.mkProgram init update view
+        |> Program.withHost this
+        |> Program.runWithAvaloniaSyncDispatch ()
