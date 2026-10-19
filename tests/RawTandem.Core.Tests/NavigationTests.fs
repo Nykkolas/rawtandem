@@ -2,6 +2,8 @@ module RawTandem.Core.NavigationTests
 
 open Expecto
 open RawTandem.Core.Navigation
+open RawTandem.Core.FolderScanTests
+open RawTandem.Core.OrganizationTests
 
 [<Tests>]
 let navigationTests =
@@ -42,8 +44,18 @@ let navigationTests =
               let remaining, index = removeItem "P9999999" items 1
               Expect.equal remaining items "rien n'est retiré"
               Expect.equal index 1 "l'index est inchangé"
+          }
+
+          test "removeWhere removes by predicate and keeps the index in bounds" {
+              let items = [ "P1230001"; "P1230002"; "P1230003" ]
+              let remaining, index = removeWhere (fun i -> i = "P1230002") items 1
+              Expect.equal remaining [ "P1230001"; "P1230003" ] "l'élément est retiré"
+              Expect.equal index 1 "l'index reste dans les bornes"
           } ]
 
 [<EntryPoint>]
 let main args =
-    runTestsWithCLIArgs [] args navigationTests
+    runTestsWithCLIArgs
+        []
+        args
+        (testList "All" [ folderScanTests; organizationTests; navigationTests ])

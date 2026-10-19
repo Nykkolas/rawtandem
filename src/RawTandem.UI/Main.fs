@@ -6,6 +6,7 @@ open Avalonia.Controls
 open Avalonia.Input
 open Avalonia.Layout
 open Avalonia.Media
+open Avalonia.Platform.Storage
 open Avalonia.FuncUI
 open Avalonia.FuncUI.DSL
 open Avalonia.FuncUI.Hosts
@@ -23,9 +24,39 @@ open RawTandem.UI.State
 
 let mutable private currentDispatch : Msg -> unit = ignore
 
+// ========== Folder picker ==========
+
+/// Ouvre le sélecteur de dossier natif et dispatch le chemin choisi.
+/// Aucun dossier choisi (Esc) : aucun message, rien ne change.
+let private pickFolder (source: obj) (dispatch: Msg -> unit) : Async<unit> =
+    async {
+        match source with
+        | :? Control as control ->
+            let topLevel = TopLevel.GetTopLevel control
+
+            if not (isNull (box topLevel)) then
+                let! folders =
+                    topLevel.StorageProvider.OpenFolderPickerAsync(FolderPickerOpenOptions(AllowMultiple = false))
+                    |> Async.AwaitTask
+
+                match List.ofSeq folders |> List.tryHead with
+                | Some folder ->
+                    let path = folder.TryGetLocalPath()
+
+                    if not (isNull (box path)) then
+                        dispatch (FolderSelected path)
+                | None -> ()
+        | _ -> ()
+    }
+
 // ========== View helpers ==========
 
 let private statusView (state: State) =
+    let statusBrush =
+        if state.Status.StartsWith SuccessStatusPrefix then Brushes.Green
+        elif state.Status.StartsWith ErrorStatusPrefix then Brushes.Red
+        else Brushes.Black
+
     Border.create [
         Border.dock Dock.Bottom
         Border.background Brushes.Gainsboro
@@ -33,6 +64,7 @@ let private statusView (state: State) =
         Border.child (
             TextBlock.create [
                 TextBlock.text (if state.Status = "" then "Prêt." else state.Status)
+                TextBlock.foreground statusBrush
             ]
         )
     ]
@@ -103,51 +135,68 @@ let private homeView (dispatch: Msg -> unit) =
                 Button.fontSize 16.0
                 Button.padding (Thickness(16.0, 8.0))
                 Button.horizontalAlignment HorizontalAlignment.Center
-                Button.onClick (fun _ -> dispatch OpenFolderClicked)
-            ]
-            Button.create [
-                Button.content "Dossier de démonstration (maquette)"
-                Button.horizontalAlignment HorizontalAlignment.Center
-                Button.onClick (fun _ -> dispatch DemoFolderLoaded)
+                Button.onClick (fun args ->
+                    pickFolder args.Source dispatch |> Async.StartImmediate)
             ]
         ]
     ]
 
 let private organizingView (state: State) (dispatch: Msg -> unit) =
+    let scan = state.Scan
+    let tandemsCount = scan.Tandems.Length
+
+    let orphanLines =
+        [ if not (List.isEmpty scan.OrphanJpgs) then
+              sprintf "%d JPG sans RAW : %s" scan.OrphanJpgs.Length (String.concat ", " scan.OrphanJpgs)
+          if not (List.isEmpty scan.OrphanRaws) then
+              sprintf "%d RAW sans JPG : %s" scan.OrphanRaws.Length (String.concat ", " scan.OrphanRaws) ]
+
+    let headerViews : Types.IView list =
+        [ TextBlock.create [
+              TextBlock.text "Dossier chargé :"
+              TextBlock.fontWeight FontWeight.Bold
+          ]
+          TextBox.create [
+              TextBox.isReadOnly true
+              TextBox.text (defaultArg state.FolderPath "")
+          ]
+          TextBlock.create [
+              TextBlock.text (sprintf "%d tandems détectés, %d RAW à la racine." tandemsCount tandemsCount)
+          ] ]
+
+    let orphanViews : Types.IView list =
+        orphanLines
+        |> List.map (fun line ->
+            TextBlock.create [
+                TextBlock.text line
+                TextBlock.foreground Brushes.DarkOrange
+            ] :> Types.IView)
+
+    let actionViews : Types.IView list =
+        [ Button.create [
+              Button.content (
+                  sprintf "Déplacer les %d RAW dans le sous-dossier « %s »" tandemsCount RawSubfolderName
+              )
+              Button.isEnabled (tandemsCount > 0)
+              Button.onClick (fun _ -> dispatch MoveRawsRequested)
+          ]
+          Button.create [
+              Button.content "Passer directement au tri"
+              Button.onClick (fun _ -> dispatch StartTriagingClicked)
+          ] ]
+
     StackPanel.create [
         StackPanel.margin (Thickness(20.0))
         StackPanel.spacing 12.0
-        StackPanel.children [
-            TextBlock.create [
-                TextBlock.text "Dossier chargé :"
-                TextBlock.fontWeight FontWeight.Bold
-            ]
-            TextBox.create [
-                TextBox.isReadOnly true
-                TextBox.text (defaultArg state.FolderPath "")
-            ]
-            TextBlock.create [
-                TextBlock.text (
-                    sprintf "%d tandems détectés, %d RAW à la racine." state.Photos.Length state.RawCountAtRoot
-                )
-            ]
-            Button.create [
-                Button.content (
-                    sprintf "Déplacer les %d RAW dans le sous-dossier « %s »" state.RawCountAtRoot RawSubfolderName
-                )
-                Button.isEnabled (state.RawCountAtRoot > 0)
-                Button.onClick (fun _ -> dispatch MoveRawsRequested)
-            ]
-            Button.create [
-                Button.content "Passer directement au tri"
-                Button.onClick (fun _ -> dispatch StartTriagingClicked)
-            ]
-        ]
+        StackPanel.children (headerViews @ orphanViews @ actionViews)
     ]
 
 let private triagingView (state: State) (dispatch: Msg -> unit) =
-    let photoCount = state.Photos.Length
-    let currentStem = List.tryItem state.CurrentIndex state.Photos
+    let photoCount = state.Scan.Tandems.Length
+    let currentStem =
+        state.Scan.Tandems
+        |> List.tryItem state.CurrentIndex
+        |> Option.map (fun tandem -> tandem.Stem)
 
     let viewerText =
         match currentStem with

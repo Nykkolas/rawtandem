@@ -13,8 +13,13 @@ let next (itemCount: int) (index: int) : int =
 let previous (itemCount: int) (index: int) : int =
     clamp itemCount (index - 1)
 
+/// Retire les éléments vérifiant le prédicat et renvoie la liste restante,
+/// avec l'index courant ajusté à la nouvelle taille.
+let removeWhere (shouldRemove: 'a -> bool) (items: 'a list) (currentIndex: int) : 'a list * int =
+    let remaining = items |> List.filter (not << shouldRemove)
+    remaining, clamp remaining.Length currentIndex
+
 /// Retire un élément par valeur et renvoie la liste restante,
 /// avec l'index courant ajusté à la nouvelle taille.
-let removeItem (item: string) (items: string list) (currentIndex: int) : string list * int =
-    let remaining = items |> List.filter (fun i -> i <> item)
-    remaining, clamp remaining.Length currentIndex
+let removeItem (item: 'a) (items: 'a list) (currentIndex: int) : 'a list * int =
+    removeWhere (fun i -> i = item) items currentIndex

@@ -6,6 +6,9 @@
 
   <ItemGroup>
     <Compile Include="Constants.fs" />
+    <Compile Include="Tandem.fs" />
+    <Compile Include="FolderScan.fs" />
+    <Compile Include="Organization.fs" />
     <Compile Include="Navigation.fs" />
   </ItemGroup>
 

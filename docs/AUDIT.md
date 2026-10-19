@@ -24,12 +24,20 @@ explicite de corriger.
 - [ ] Les échecs partiels (un fichier du couple déplacé, l'autre non) sont signalés à l'utilisateur.
 - [ ] Machine à états Elmish (`Msg`, `State`, `Status`, textes UI) côté UI uniquement, jamais dans le Core.
 
-## 🗂️ 3. Organisation des fichiers — compléments spécifiques
+## 🗣️ 3. Vocabulaire domaine / technique (instanciation du thème 8 générique)
+
+Le thème générique est dans `docs/AUDIT-GENERIC.md`. Instances spécifiques au projet :
+
+- [ ] `Tandem` (vocabulaire de VISION.md) vit dans le module de domaine pur `Tandems`, pas dans un service technique.
+- [ ] Un registre par module : `Tandems` (domaine pur), `FolderScan` (lecture), `Organization` (opération avec effets).
+- [ ] `RawMovePlan` / `RawMoveOutcome` (frontière Core/UI) sont nommés pour ce qu'ils sont : le contrat d'exécution, pas du vocabulaire utilisateur.
+
+## 🗂️ 4. Organisation des fichiers — compléments spécifiques
 
 - [ ] Frontières Core/UI respectées (voir AGENTS.md, section Architecture).
 - [ ] Tests en miroir : un fichier de test par module testé, dans `tests/` parallèle à `src/`.
 
-## 🧪 4. Couverture des tests — compléments spécifiques
+## 🧪 5. Couverture des tests — compléments spécifiques
 
 - [ ] Chaque module de `src/RawTandem.Core` a son fichier de tests correspondant.
 - [ ] Cas limites couverts : dossier vide, JPG sans RAW, RAW sans JPG, extensions en majuscules/minuscules, stems identiques.

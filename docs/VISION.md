@@ -29,9 +29,14 @@ Un trieur de photos qui considère chaque cliché comme **un couple JPG+RAW** :
 | Workflow | 3 phases : accueil → organisation (déplacement des RAW, avec confirmation) → tri |
 | Cible RAW | `.RW2` uniquement (autres formats en évolution, voir `docs/TODO.md`) |
 | Suppression | Corbeille OS, jamais de suppression définitive |
-| Déplacement | Non décidé — la décision est attendue de l'utilisateur |
+| Ouverture de dossier | Sélecteur de dossier natif Avalonia (`StorageProvider.OpenFolderPickerAsync`) ; aucun message si l'utilisateur annule |
+| Scan du dossier | **Racine uniquement** : les sous-dossiers (dont un `RAW/` déjà organisé) sont ignorés |
+| Déplacement (organisation) | **RAW des tandems appariés uniquement** ; les orphelins sont signalés dans le résumé mais laissés en place (action au fichier seul : à décider plus tard) |
+| Collisions | Un RAW déjà présent dans `RAW/` n'est **jamais écrasé** : signalé et ignoré, au plan comme à l'exécution |
+| Après un déplacement réussi | Statut de confirmation (`✓ N RAW déplacés…`) puis **passage automatique au tri** ; en cas d'échec partiel, on reste à l'organisation et chaque échec est signalé |
+| Déplacement des tandems (tri) | Non décidé — la décision est attendue de l'utilisateur |
 | Sécurité des données | Le Core calcule un plan d'opérations, l'UI n'exécute que ce plan |
-| Orphelins | JPG sans RAW / RAW sans JPG : affichés et gérés explicitement (à implémenter) |
+| Orphelins | JPG sans RAW / RAW sans JPG : affichés dans le résumé du scan et gérés explicitement (action dédiée à implémenter) |
 | Architecture | `src/RawTandem.Core` = domaine pur, réutilisable par n'importe quel front (console, web, GUI), **sans Elmish ni Avalonia** ; la machine à états Elmish (`Msg`, `init`, `update`, `Status`) vit dans `src/RawTandem.UI/State.fs` ; tests Expecto dans `tests/` en miroir |
 | Confirmations | Une action destructive en attente est un écran `Confirming of Phase * PendingAction`, pas un champ optionnel : une confirmation sans action en attente est signalée à l'utilisateur, jamais avalée |
 | Garde des actions | Les messages (navigation, suppression) ne s'appliquent qu'à leur écran, la garde est dans `update` (tout producteur de messages est couvert, raccourcis clavier inclus) |
