@@ -6,6 +6,7 @@ Cases à cocher en Markdown : `[ ]` → `[x]` (cliquable aussi dans l'UI web Git
 
 - [x] Squelette de la solution : `src/RawTandem.Core` + `src/RawTandem.UI` + tests en miroir, stack Avalonia 12 / FuncUI 2 / Elmish 5 / Expecto, net10.0
 - [ ] Appariement JPG+RW2 par stem de nom de fichier (TDD, dans le Core)
+- [ ] Type domaine `Tandem` dans le Core : radical du nom de fichier (stem) + fonctions pour déduire l'emplacement du JPG (racine) et du RAW (sous-dossier `RAW/`) ; remplacer `Photos: string list` (stems nus) dans l'UI State par ce type — suggestion à étudier quand l'appariement réel atterrit
 - [ ] Suppression d'un tandem JPG+RAW vers la corbeille OS (`gio trash` sous Linux)
 - [ ] UI minimale : choisir un dossier, visualiser un JPG, supprimer le tandem
 - [ ] Déplacement des tandems : décision à prendre (destinations nommées / sélection à la volée / destination fixe), puis implémentation
