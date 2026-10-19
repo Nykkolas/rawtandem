@@ -14,69 +14,43 @@ let init' () : State =
 
 // ========== Fixtures (données pures, aucun fichier n'est touché) ==========
 
-/// Chemin factice : le plan de déplacement ne trouve jamais de collision
-/// (File.Exists renvoie faux sur un dossier inexistant).
+/// Chemin factice : le plan ne trouve jamais de cible existante.
 let private fixtureFolderPath = "/dossier-fixture-rawtandem-inexistant"
 
 let private tandem (stem: string) =
     { Stem = stem; JpgFileName = stem + ".JPG"; RawFileName = stem + ".RW2" }
 
-let private fixtureStems = [ "P1230001"; "P1230002"; "P1230003" ]
+let private fixtureStems = [ "P1"; "P2"; "P3" ]
 
-let private fixtureScan =
-    { Tandems = fixtureStems |> List.map tandem
-      OrphanJpgs = []
-      OrphanRaws = [] }
+let private fixtureScan = { emptyScan with TandemsToOrganize = fixtureStems |> List.map tandem }
 
-/// Écran d'organisation obtenu en sélectionnant un dossier puis en recevant
-/// le résultat de son scan.
+let private rawMoveFixture stem =
+    { Kind = RawToSubfolder
+      SourcePath = sprintf "%s/%s.RW2" fixtureFolderPath stem
+      TargetPath = sprintf "%s/RAW/%s.RW2" fixtureFolderPath stem
+      TargetRenamed = false }
+
+let private planFixture =
+    { RawDirectoryPath = sprintf "%s/RAW" fixtureFolderPath
+      Moves = fixtureStems |> List.map rawMoveFixture }
+
+/// Écran d'organisation obtenu en sélectionnant un dossier puis en recevant son scan.
 let organizing' () : State =
     init' ()
     |> update' (FolderSelected fixtureFolderPath)
     |> update' (FolderScanned fixtureScan)
 
-/// Écran de tri atteint sans déplacement.
+/// Écran de confirmation de l'organisation (demande + plan calculé).
+let confirming' () : State =
+    organizing' ()
+    |> update' OrganizeRequested
+    |> update' (OrganizePlanned planFixture)
+
+/// Écran de tri atteint sans organisation.
 let triaging' () : State =
     organizing' () |> update' StartTriagingClicked
 
-/// Résultat de déplacement entièrement réussi pour le plan de la fixture.
-let private movedOutcome =
-    { Moved =
-        fixtureStems
-        |> List.map (fun s ->
-            { SourcePath = sprintf "%s/%s.RW2" fixtureFolderPath s
-              TargetPath = sprintf "%s/RAW/%s.RW2" fixtureFolderPath s })
-      Failed = [] }
-
-let private moveFixture (stem: string) =
-    { SourcePath = sprintf "%s/%s.RW2" fixtureFolderPath stem
-      TargetPath = sprintf "%s/RAW/%s.RW2" fixtureFolderPath stem }
-
-let private planFixture =
-    { RawDirectoryPath = sprintf "%s/RAW" fixtureFolderPath
-      Moves = fixtureStems |> List.map moveFixture
-      Collisions = [] }
-
-let private planWithCollisions =
-    { planFixture with
-        Moves = [ moveFixture fixtureStems.[0] ]
-        Collisions = [ "P1230009.RW2"; "P1230010.RW2" ] }
-
-let private planWithOnlyCollisions =
-    { planFixture with
-        Moves = []
-        Collisions = [ "P1230009.RW2"; "P1230010.RW2" ] }
-
-let private planEmpty =
-    { RawDirectoryPath = sprintf "%s/RAW" fixtureFolderPath
-      Moves = []
-      Collisions = [] }
-
-/// Écran de confirmation du déplacement des RAW (demande + plan calculé).
-let confirming' () : State =
-    organizing' ()
-    |> update' MoveRawsRequested
-    |> update' (MoveRawsPlanned planFixture)
+let private outcomeAllMoved = { Moved = planFixture.Moves; Failed = [] }
 
 [<Tests>]
 let stateTests =
@@ -103,15 +77,20 @@ let stateTests =
                 test "FolderScanned switches to the Organizing screen with the scan result" {
                     let state = organizing' ()
                     Expect.equal state.Screen (Working Organizing) "écran après analyse"
-                    Expect.equal state.Scan.Tandems.Length 3 "tandems du scan"
+                    Expect.equal state.Scan.TandemsToOrganize.Length 3 "tandems du scan"
                     Expect.equal state.CurrentIndex 0 "index initial"
                 }
 
-                test "FolderScanned mentions the orphans in the status" {
-                    let scan = { fixtureScan with OrphanJpgs = [ "P1230009.JPG" ]; OrphanRaws = [ "P1230010.RW2" ] }
+                test "FolderScanned announces an already organized folder" {
+                    let scan = { emptyScan with OrganizedTandems = [ tandem "P1" ] }
                     let state = init' () |> update' (FolderSelected fixtureFolderPath) |> update' (FolderScanned scan)
-                    Expect.stringContains state.Status "P1230009.JPG" "JPG orphelin signalé"
-                    Expect.stringContains state.Status "P1230010.RW2" "RAW orphelin signalé"
+                    Expect.stringContains state.Status "déjà organisé" "message dédié"
+                }
+
+                test "FolderScanned reports a RAW folder anomaly" {
+                    let scan = { emptyScan with RawFolderIssue = Some RawFolderIsFile }
+                    let state = init' () |> update' (FolderSelected fixtureFolderPath) |> update' (FolderScanned scan)
+                    Expect.stringContains state.Status "RAW" "l'anomalie est visible"
                 }
 
                 test "FolderScanFailed stays on Home and reports the error" {
@@ -125,135 +104,314 @@ let stateTests =
                 } ]
 
           testList
-              "RAW move"
-              [ test "MoveRawsRequested with no tandem reports immediately without planning" {
-                    let state =
-                        { organizing' () with Scan = emptyScan }
-                        |> update' MoveRawsRequested
-
-                    Expect.equal state.Screen (Working Organizing) "pas d'écran de confirmation"
-                    Expect.stringContains state.Status "Aucun RAW" "message explicite"
-                }
-
-                test "MoveRawsRequested prepares the confirmation asynchronously" {
-                    let state = organizing' () |> update' MoveRawsRequested
-                    Expect.equal state.Screen (Working Organizing) "l'écran attend le résultat du plan"
+              "organize"
+              [ test "OrganizeRequested prepares the plan asynchronously" {
+                    let state = organizing' () |> update' OrganizeRequested
+                    Expect.equal state.Screen (Working Organizing) "l'écran attend le plan"
                     Expect.stringContains state.Status "Préparation" "préparation annoncée"
                 }
 
-                test "MoveRawsRequested does nothing outside the Organizing screen" {
-                    let state = init' () |> update' MoveRawsRequested
+                test "OrganizeRequested with nothing to fix reports immediately" {
+                    let scan = { emptyScan with OrganizedTandems = [ tandem "P1" ] }
+                    let state =
+                        init' ()
+                        |> update' (FolderSelected fixtureFolderPath)
+                        |> update' (FolderScanned scan)
+                        |> update' OrganizeRequested
+
+                    Expect.equal state.Screen (Working Organizing) "pas d'écran de confirmation"
+                    Expect.stringContains state.Status "Rien" "rien à remettre en ordre"
+                }
+
+                test "OrganizeRequested with a RAW-as-file anomaly refuses to plan" {
+                    let scan = { fixtureScan with RawFolderIssue = Some RawFolderIsFile }
+                    let state =
+                        init' ()
+                        |> update' (FolderSelected fixtureFolderPath)
+                        |> update' (FolderScanned scan)
+                        |> update' OrganizeRequested
+
+                    Expect.equal state.Screen (Working Organizing) "pas d'écran de confirmation"
+                    Expect.stringContains state.Status "RAW" "l'anomalie bloque la planification"
+                }
+
+                test "OrganizeRequested does nothing outside the Organizing screen" {
+                    let state = init' () |> update' OrganizeRequested
                     Expect.equal state.Screen (Working Home) "aucun changement d'écran"
                 }
 
-                test "MoveRawsPlanned with moves opens the Confirming screen with the plannable count" {
-                    let state = organizing' () |> update' (MoveRawsPlanned planFixture)
-                    Expect.equal state.Screen (Confirming(Organizing, MoveRawFiles 3)) "écran de confirmation"
-                    Expect.equal state.Status "" "aucune collision à signaler"
+                test "OrganizePlanned with moves opens the Confirming screen with counts by kind" {
+                    let state = organizing' () |> update' (OrganizePlanned planFixture)
+                    Expect.equal state.Screen (Confirming(Organizing, OrganizeFolder(3, 0))) "confirmation avec comptes RAW/JPG"
                 }
 
-                test "MoveRawsPlanned with collisions warns they will be ignored" {
-                    let state = organizing' () |> update' (MoveRawsPlanned planWithCollisions)
-                    Expect.equal state.Screen (Confirming(Organizing, MoveRawFiles 1)) "seul le RAW plannifiable compte"
-                    Expect.stringContains state.Status "2 RAW déjà présents" "les collisions sont signalées"
-                    Expect.stringContains state.Status "ignorés" "jamais écrasés"
-                }
-
-                test "MoveRawsPlanned with only collisions reports nothing to move" {
-                    let state = organizing' () |> update' (MoveRawsPlanned planWithOnlyCollisions)
+                test "OrganizePlanned without moves reports and stays" {
+                    let emptyPlan = { RawDirectoryPath = ""; Moves = [] }
+                    let state = organizing' () |> update' (OrganizePlanned emptyPlan)
                     Expect.equal state.Screen (Working Organizing) "pas d'écran de confirmation"
-                    Expect.stringContains state.Status "Aucun RAW à déplacer" "message explicite"
-                    Expect.stringContains state.Status "2 fichiers déjà présents" "la raison est donnée"
+                    Expect.stringContains state.Status "Rien" "message explicite"
                 }
 
-                test "MoveRawsPlanned empty without collisions reports nothing to move" {
-                    let state = organizing' () |> update' (MoveRawsPlanned planEmpty)
-                    Expect.equal state.Screen (Working Organizing) "pas d'écran de confirmation"
-                    Expect.stringContains state.Status "Aucun RAW à déplacer" "message explicite"
-                }
-
-                test "MoveRawsPlanned outside the Organizing screen is ignored" {
+                test "OrganizePlanned outside the Organizing screen is ignored" {
                     let expected = triaging' ()
-                    let state = expected |> update' (MoveRawsPlanned planFixture)
+                    let state = expected |> update' (OrganizePlanned planFixture)
                     Expect.equal state expected "rien ne change : le plan est obsolète"
                 }
 
-                test "MoveRawsPlanningFailed stays on Organizing and reports the error" {
+                test "OrganizeRequested without a folder reports instead of crashing" {
+                    let state = { organizing' () with FolderPath = None } |> update' OrganizeRequested
+                    Expect.equal state.Screen (Working Organizing) "l'écran ne change pas"
+                    Expect.stringContains state.Status "Aucun dossier" "l'état incohérent est signalé, pas de crash"
+                }
+
+                test "OrganizeConfirmed without a folder reports instead of crashing" {
+                    let state =
+                        { confirming' () with FolderPath = None }
+                        |> update' OrganizeConfirmed
+
+                    Expect.equal state.Screen (Working Organizing) "retour à l'organisation sans exécution"
+                    Expect.stringContains state.Status "Aucun dossier" "l'état incohérent est signalé, pas de crash"
+                }
+
+                test "ResolveDuplicatesConfirmed without a folder reports instead of crashing" {
+                    let confirmingDups =
+                        { organizing' () with
+                            Scan = { emptyScan with DuplicateRaws = [ "P9.RW2" ] } }
+                        |> update' ResolveDuplicatesRequested
+
+                    let state = { confirmingDups with FolderPath = None } |> update' ResolveDuplicatesConfirmed
+
+                    Expect.equal state.Screen (Working Organizing) "retour à l'organisation sans exécution"
+                    Expect.stringContains state.Status "Aucun dossier" "l'état incohérent est signalé, pas de crash"
+                }
+
+                test "NormalizeRawFolderConfirmed without a folder reports instead of crashing" {
+                    let confirmingRename =
+                        { organizing' () with Scan = { emptyScan with RawFolderIssue = Some(RawFolderCaseMismatch "raw") } }
+                        |> update' NormalizeRawFolderRequested
+
+                    let state = { confirmingRename with FolderPath = None } |> update' NormalizeRawFolderConfirmed
+
+                    Expect.equal state.Screen (Working Organizing) "retour à l'organisation sans exécution"
+                    Expect.stringContains state.Status "Aucun dossier" "l'état incohérent est signalé, pas de crash"
+                }
+
+                test "OrganizePlanningFailed stays on Organizing and reports the error" {
                     let state =
                         organizing' ()
-                        |> update' MoveRawsRequested
-                        |> update' (MoveRawsPlanningFailed "acces refuse")
+                        |> update' OrganizeRequested
+                        |> update' (OrganizePlanningFailed "acces refuse")
 
                     Expect.equal state.Screen (Working Organizing) "on reste à l'organisation"
                     Expect.stringContains state.Status "acces refuse" "erreur visible"
                 }
 
-                test "MoveRawsConfirmed switches to Organizing while the move is in flight" {
-                    let state = confirming' () |> update' MoveRawsConfirmed
+                test "OrganizeConfirmed switches to Organizing while the moves run" {
+                    let state = confirming' () |> update' OrganizeConfirmed
                     Expect.equal state.Screen (Working Organizing) "plus d'écran de confirmation pendant l'exécution"
                     Expect.stringContains state.Status "en cours" "exécution annoncée"
                 }
 
-                test "MoveRawsNothingToMove at confirm stays on Organizing and reports collisions" {
-                    let state =
-                        confirming' ()
-                        |> update' MoveRawsConfirmed
-                        |> update' (MoveRawsNothingToMove 2)
-
-                    Expect.equal state.Screen (Working Organizing) "on reste à l'organisation"
-                    Expect.stringContains state.Status "2 fichiers déjà présents" "les collisions sont expliquées"
-                }
-
-                test "MoveRawsCompleted with all moves goes to Triaging and confirms success" {
-                    let state =
-                        confirming' ()
-                        |> update' MoveRawsConfirmed
-                        |> update' (MoveRawsCompleted movedOutcome)
-
+                test "OrganizeCompleted with all moves goes to Triaging and confirms success" {
+                    let state = confirming' () |> update' OrganizeConfirmed |> update' (OrganizeCompleted outcomeAllMoved)
                     Expect.equal state.Screen (Working Triaging) "passage au tri après succès"
                     Expect.stringContains state.Status SuccessStatusPrefix "préfixe de succès"
                     Expect.stringContains state.Status "3" "les 3 RAW déplacés sont comptés"
-                    Expect.stringContains state.Status "RAW" "le sous-dossier est nommé"
                 }
 
-                test "MoveRawsCompleted with failures stays on Organizing and reports them" {
+                test "OrganizeCompleted with failures stays on Organizing and reports them" {
                     let outcome =
-                        { Moved = [ { SourcePath = "/s/P1230001.RW2"; TargetPath = "/s/RAW/P1230001.RW2" } ]
-                          Failed = [ ({ SourcePath = "/s/P1230002.RW2"; TargetPath = "/s/RAW/P1230002.RW2" }, "permission refusee") ] }
+                        { Moved = [ rawMoveFixture "P1" ]
+                          Failed = [ (rawMoveFixture "P2", "permission refusee") ] }
 
-                    let state =
-                        confirming' ()
-                        |> update' MoveRawsConfirmed
-                        |> update' (MoveRawsCompleted outcome)
+                    let state = confirming' () |> update' OrganizeConfirmed |> update' (OrganizeCompleted outcome)
 
                     Expect.equal state.Screen (Working Organizing) "on reste à l'organisation"
-                    Expect.stringContains state.Status "P1230002" "l'échec identifie le fichier"
+                    Expect.stringContains state.Status "P2.RW2" "l'échec identifie le fichier"
                     Expect.stringContains state.Status "permission refusee" "le message d'erreur est visible"
                 }
 
-                test "MoveRawsFailed stays on Organizing and reports the error" {
-                    let state =
-                        confirming' ()
-                        |> update' MoveRawsConfirmed
-                        |> update' (MoveRawsFailed "disque plein")
+                test "OrganizeNothingToMove stays on Organizing and explains" {
+                    let state = confirming' () |> update' OrganizeConfirmed |> update' OrganizeNothingToMove
+                    Expect.equal state.Screen (Working Organizing) "on reste à l'organisation"
+                    Expect.stringContains state.Status "Rien" "le dossier a changé entre-temps"
+                }
 
+                test "OrganizeFailed stays on Organizing and reports the error" {
+                    let state = confirming' () |> update' OrganizeConfirmed |> update' (OrganizeFailed "disque plein")
                     Expect.equal state.Screen (Working Organizing) "on reste à l'organisation"
                     Expect.stringContains state.Status "disque plein" "erreur visible"
                 }
 
-                test "MoveRawsConfirmed without a matching pending action is reported, not swallowed" {
-                    let state = organizing' () |> update' MoveRawsConfirmed
+                test "OrganizeConfirmed without a matching pending action is reported, not swallowed" {
+                    let state = organizing' () |> update' OrganizeConfirmed
                     Expect.equal state.Screen (Working Organizing) "l'écran ne change pas"
                     Expect.stringContains state.Status "Confirmation inattendue" "l'incohérence est signalée"
                 }
 
-                test "MoveRawsCancelled returns to the Organizing screen" {
-                    let state = confirming' () |> update' MoveRawsCancelled
+                test "OrganizeCancelled returns to the Organizing screen" {
+                    let state = confirming' () |> update' OrganizeCancelled
                     Expect.equal state.Screen (Working Organizing) "retour à l'organisation"
-                    Expect.stringContains state.Status "annulé" "annulation signalée"
+                    Expect.stringContains state.Status "annul" "annulation signalée"
+                } ]
+
+          testList
+              "duplicate resolution"
+              [ let dupScan = { emptyScan with DuplicateRaws = [ "P9.RW2" ]; DuplicateJpgs = [ "P8.JPG" ] }
+
+                let organizingWithDups () =
+                    init' ()
+                    |> update' (FolderSelected fixtureFolderPath)
+                    |> update' (FolderScanned dupScan)
+
+                test "ResolveDuplicatesRequested opens a Confirming screen with the duplicate count" {
+                    let state = organizingWithDups () |> update' ResolveDuplicatesRequested
+                    Expect.equal state.Screen (Confirming(Organizing, ResolveDuplicates 2)) "confirmation pour les 2 doublons"
                 }
 
-                test "StartTriagingClicked skips to Triaging without moving" {
+                test "ResolveDuplicatesRequested without duplicates reports it" {
+                    let state = organizing' () |> update' ResolveDuplicatesRequested
+                    Expect.equal state.Screen (Working Organizing) "pas d'écran de confirmation"
+                    Expect.stringContains state.Status "Aucun doublon" "message explicite"
+                }
+
+                test "ResolveDuplicatesConfirmed runs while back on Organizing" {
+                    let state =
+                        organizingWithDups ()
+                        |> update' ResolveDuplicatesRequested
+                        |> update' ResolveDuplicatesConfirmed
+
+                    Expect.equal state.Screen (Working Organizing) "plus d'écran de confirmation pendant l'exécution"
+                    Expect.stringContains state.Status "en cours" "exécution annoncée"
+                }
+
+                test "ResolveDuplicatesCompleted stays on Organizing and confirms renames" {
+                    let move =
+                        { Kind = RawToSubfolder
+                          SourcePath = sprintf "%s/P9.RW2" fixtureFolderPath
+                          TargetPath = sprintf "%s/RAW/P9 (1).RW2" fixtureFolderPath
+                          TargetRenamed = true }
+
+                    let state =
+                        organizingWithDups ()
+                        |> update' ResolveDuplicatesRequested
+                        |> update' ResolveDuplicatesConfirmed
+                        |> update' (ResolveDuplicatesCompleted { Moved = [ move ]; Failed = [] })
+
+                    Expect.equal state.Screen (Working Organizing) "on reste à l'organisation après une résolution"
+                    Expect.stringContains state.Status SuccessStatusPrefix "préfixe de succès"
+                    Expect.stringContains state.Status "renomm" "le renommage est confirmé"
+                }
+
+                test "ResolveDuplicatesFailed reports the error" {
+                    let state =
+                        organizingWithDups ()
+                        |> update' ResolveDuplicatesRequested
+                        |> update' ResolveDuplicatesConfirmed
+                        |> update' (ResolveDuplicatesFailed "lecture seule")
+
+                    Expect.equal state.Screen (Working Organizing) "on reste à l'organisation"
+                    Expect.stringContains state.Status "lecture seule" "erreur visible"
+                }
+
+                test "ResolveDuplicatesCancelled returns to the Organizing screen" {
+                    let state =
+                        organizingWithDups ()
+                        |> update' ResolveDuplicatesRequested
+                        |> update' ResolveDuplicatesCancelled
+
+                    Expect.equal state.Screen (Working Organizing) "retour à l'organisation"
+                    Expect.stringContains state.Status "annul" "annulation signalée"
+                }
+
+                test "ResolveDuplicatesRequested counts case twins too" {
+                    let twinScan = { emptyScan with CaseCollisions = [ { FileName = "P1.jpg"; InRawSubfolder = false } ] }
+
+                    let state =
+                        init' ()
+                        |> update' (FolderSelected fixtureFolderPath)
+                        |> update' (FolderScanned twinScan)
+                        |> update' ResolveDuplicatesRequested
+
+                    Expect.equal state.Screen (Confirming(Organizing, ResolveDuplicates 1)) "le jumeau compte comme anomalie à résoudre"
+                }
+
+                test "ResolveDuplicatesConfirmed without a matching pending action is reported" {
+                    let state = organizing' () |> update' ResolveDuplicatesConfirmed
+                    Expect.stringContains state.Status "Confirmation inattendue" "l'incohérence est signalée"
+                } ]
+
+          testList
+              "raw folder name normalization"
+              [ let caseMismatchScan = { emptyScan with RawFolderIssue = Some(RawFolderCaseMismatch "raw") }
+
+                let organizingWithCaseMismatch () =
+                    init' ()
+                    |> update' (FolderSelected fixtureFolderPath)
+                    |> update' (FolderScanned caseMismatchScan)
+
+                test "NormalizeRawFolderRequested opens a Confirming screen with the found name" {
+                    let state = organizingWithCaseMismatch () |> update' NormalizeRawFolderRequested
+                    Expect.equal state.Screen (Confirming(Organizing, NormalizeRawFolder "raw")) "confirmation du renommage"
+                }
+
+                test "NormalizeRawFolderRequested without the anomaly reports it" {
+                    let state = organizing' () |> update' NormalizeRawFolderRequested
+                    Expect.equal state.Screen (Working Organizing) "pas d'écran de confirmation"
+                    Expect.stringContains state.Status "Aucun dossier" "message explicite"
+                }
+
+                test "NormalizeRawFolderConfirmed runs while back on Organizing" {
+                    let state =
+                        organizingWithCaseMismatch ()
+                        |> update' NormalizeRawFolderRequested
+                        |> update' NormalizeRawFolderConfirmed
+
+                    Expect.equal state.Screen (Working Organizing) "plus d'écran de confirmation pendant l'exécution"
+                    Expect.stringContains state.Status "en cours" "exécution annoncée"
+                }
+
+                test "NormalizeRawFolderCompleted confirms the rename" {
+                    let state =
+                        organizingWithCaseMismatch ()
+                        |> update' NormalizeRawFolderRequested
+                        |> update' NormalizeRawFolderConfirmed
+                        |> update' NormalizeRawFolderCompleted
+
+                    Expect.equal state.Screen (Working Organizing) "on reste à l'organisation"
+                    Expect.stringContains state.Status SuccessStatusPrefix "préfixe de succès"
+                    Expect.stringContains state.Status "RAW" "le nouveau nom est confirmé"
+                }
+
+                test "NormalizeRawFolderFailed reports the error" {
+                    let state =
+                        organizingWithCaseMismatch ()
+                        |> update' NormalizeRawFolderRequested
+                        |> update' NormalizeRawFolderConfirmed
+                        |> update' (NormalizeRawFolderFailed "permission refusee")
+
+                    Expect.equal state.Screen (Working Organizing) "on reste à l'organisation"
+                    Expect.stringContains state.Status "permission refusee" "erreur visible"
+                }
+
+                test "NormalizeRawFolderCancelled returns to the Organizing screen" {
+                    let state =
+                        organizingWithCaseMismatch ()
+                        |> update' NormalizeRawFolderRequested
+                        |> update' NormalizeRawFolderCancelled
+
+                    Expect.equal state.Screen (Working Organizing) "retour à l'organisation"
+                    Expect.stringContains state.Status "annul" "annulation signalée"
+                }
+
+                test "NormalizeRawFolderConfirmed without a matching pending action is reported" {
+                    let state = organizing' () |> update' NormalizeRawFolderConfirmed
+                    Expect.stringContains state.Status "Confirmation inattendue" "l'incohérence est signalée"
+                } ]
+
+          testList
+              "triage"
+              [ test "StartTriagingClicked skips to Triaging without organizing" {
                     let state = organizing' () |> update' StartTriagingClicked
                     Expect.equal state.Screen (Working Triaging) "écran de tri"
                 } ]
@@ -306,8 +464,7 @@ let stateTests =
                         |> update' DeleteTandemRequested
                         |> update' DeleteTandemConfirmed
 
-                    Expect.equal state.Scan.Tandems.Length (fixtureStems.Length - 1) "une photo de moins"
-                    Expect.isFalse (state.Scan.Tandems |> List.exists (fun t -> t.Stem = fixtureStems.[0])) "le tandem n'est plus listé"
+                    Expect.equal state.Scan.TandemsToOrganize.Length (fixtureStems.Length - 1) "une photo de moins"
                     Expect.equal state.Screen (Working Triaging) "retour au tri"
                     Expect.stringContains state.Status (fixtureStems.[0] + ".JPG") "JPG mentionné"
                     Expect.stringContains state.Status (fixtureStems.[0] + ".RW2") "RAW mentionné"
@@ -324,6 +481,28 @@ let stateTests =
                     Expect.equal state.CurrentIndex (last - 1) "index ramené au nouveau dernier"
                 }
 
+                test "DeleteTandemConfirmed on an organized tandem keeps the index on the visible list" {
+                    // 1 tandem à organiser + 3 organisés : le courant est le dernier
+                    // visible (un organisé). L'index doit reculer au nouveau dernier.
+                    let scan =
+                        { emptyScan with
+                            TandemsToOrganize = [ tandem "P1" ]
+                            OrganizedTandems = [ "P2"; "P3"; "P4" ] |> List.map tandem }
+
+                    let state =
+                        init' ()
+                        |> update' (FolderSelected fixtureFolderPath)
+                        |> update' (FolderScanned scan)
+                        |> update' StartTriagingClicked
+                        |> (fun s -> { s with CurrentIndex = 3 })
+
+                    let confirmed = state |> update' DeleteTandemRequested |> update' DeleteTandemConfirmed
+
+                    Expect.equal confirmed.Screen (Working Triaging) "retour au tri"
+                    Expect.equal confirmed.CurrentIndex 2 "l'index recule au nouveau dernier, pas plus tôt"
+                    Expect.equal confirmed.Scan.OrganizedTandems.Length 2 "le tandem organisé est retiré"
+                }
+
                 test "DeleteTandemConfirmed without a matching pending action is reported, not swallowed" {
                     let state = triaging' () |> update' DeleteTandemConfirmed
                     Expect.equal state.Screen (Working Triaging) "l'écran ne change pas"
@@ -336,9 +515,9 @@ let stateTests =
                         |> update' DeleteTandemRequested
                         |> update' DeleteTandemCancelled
 
-                    Expect.equal state.Scan.Tandems.Length fixtureStems.Length "rien n'est supprimé"
+                    Expect.equal state.Scan.TandemsToOrganize.Length fixtureStems.Length "rien n'est supprimé"
                     Expect.equal state.Screen (Working Triaging) "retour au tri"
-                    Expect.stringContains state.Status "annulée" "annulation signalée"
+                    Expect.stringContains state.Status "annul" "annulation signalée"
                 } ] ]
 
 [<EntryPoint>]

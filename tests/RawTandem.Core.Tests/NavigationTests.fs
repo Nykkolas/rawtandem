@@ -51,6 +51,12 @@ let navigationTests =
               let remaining, index = removeWhere (fun i -> i = "P1230002") items 1
               Expect.equal remaining [ "P1230001"; "P1230003" ] "l'élément est retiré"
               Expect.equal index 1 "l'index reste dans les bornes"
+          }
+
+          test "bounded clamps the index to the list bounds" {
+              Expect.equal (bounded 3 5) 2 "borné au dernier"
+              Expect.equal (bounded 3 0) 0 "reste au premier"
+              Expect.equal (bounded 0 4) 0 "liste vide : retour à zéro"
           } ]
 
 [<EntryPoint>]

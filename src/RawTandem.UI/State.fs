@@ -16,14 +16,16 @@ type Phase =
     | Organizing
     | Triaging
 
-/// Action destructive en attente de confirmation explicite de l'utilisateur.
+/// Action en attente de confirmation explicite de l'utilisateur.
 type PendingAction =
-    | MoveRawFiles of count: int
+    | OrganizeFolder of rawMoves: int * jpgMoves: int
+    | ResolveDuplicates of count: int
+    | NormalizeRawFolder of foundName: string
     | DeleteTandem of stem: string
 
-/// Écran courant : une action destructive en attente de confirmation est un
-/// écran à part entière, pas un champ optionnel. Une confirmation ne peut
-/// donc pas exister sans action en attente.
+/// Écran courant : une action en attente de confirmation est un écran à part
+/// entière, pas un champ optionnel. Une confirmation ne peut donc pas exister
+/// sans action en attente.
 type Screen =
     | Working of phase: Phase
     | Confirming of phase: Phase * action: PendingAction
@@ -31,7 +33,7 @@ type Screen =
 type State =
     { Screen: Screen
       FolderPath: string option
-      /// Résultat du scan du dossier : tandems appariés et orphelins.
+      /// Résultat du scan du dossier, classé selon l'arbre de décision.
       Scan: FolderScan
       CurrentIndex: int
       Status: string }
@@ -40,14 +42,24 @@ type Msg =
     | FolderSelected of path: string
     | FolderScanned of scan: FolderScan
     | FolderScanFailed of error: string
-    | MoveRawsRequested
-    | MoveRawsPlanned of plan: RawMovePlan
-    | MoveRawsPlanningFailed of error: string
-    | MoveRawsConfirmed
-    | MoveRawsCompleted of outcome: RawMoveOutcome
-    | MoveRawsNothingToMove of collisions: int
-    | MoveRawsFailed of error: string
-    | MoveRawsCancelled
+    | OrganizeRequested
+    | OrganizePlanned of plan: OrganizationPlan
+    | OrganizePlanningFailed of error: string
+    | OrganizeConfirmed
+    | OrganizeCompleted of outcome: MoveOutcome
+    | OrganizeNothingToMove
+    | OrganizeFailed of error: string
+    | OrganizeCancelled
+    | ResolveDuplicatesRequested
+    | ResolveDuplicatesConfirmed
+    | ResolveDuplicatesCompleted of outcome: MoveOutcome
+    | ResolveDuplicatesFailed of error: string
+    | ResolveDuplicatesCancelled
+    | NormalizeRawFolderRequested
+    | NormalizeRawFolderConfirmed
+    | NormalizeRawFolderCompleted
+    | NormalizeRawFolderFailed of error: string
+    | NormalizeRawFolderCancelled
     | StartTriagingClicked
     | PreviousClicked
     | NextClicked
@@ -67,6 +79,21 @@ let ErrorStatusPrefix = "✗ "
 let private UnexpectedConfirmationStatus =
     "Confirmation inattendue : aucune action effectuée."
 
+// ========== Helpers ==========
+
+/// Nombre de déplacements que l'organisation peut planifier à partir du
+/// scan seul (sans I/O) : sert au libellé du bouton et aux gardes.
+let fixableCount (scan: FolderScan) =
+    scan.TandemsToOrganize.Length
+    + scan.OrphanRawsToOrganize.Length
+    + scan.CrossedTandems.Length * 2
+    + scan.InvertedTandems.Length
+    + scan.OrphanJpgsInRaw.Length
+
+/// Tandems visibles dans le tri : tous ceux dont le JPG est à la racine.
+let triableTandems (state: State) =
+    state.Scan.TandemsToOrganize @ state.Scan.OrganizedTandems
+
 // ========== Logic ==========
 
 let init () : State * Cmd<Msg> =
@@ -82,40 +109,82 @@ let init () : State * Cmd<Msg> =
 let private reportUnexpectedConfirmation (state: State) : State * Cmd<Msg> =
     { state with Status = UnexpectedConfirmationStatus }, Cmd.none
 
-/// Statut de synthèse après un scan : tandems et éventuels orphelins.
+/// Statut de synthèse après un scan : organisation à faire ou déjà faite.
 let private scanStatus (scan: FolderScan) =
-    let orphanNotes =
-        [ if not (List.isEmpty scan.OrphanJpgs) then
-              sprintf "%d JPG sans RAW (%s…)"
-                  scan.OrphanJpgs.Length
-                  (List.head scan.OrphanJpgs)
-          if not (List.isEmpty scan.OrphanRaws) then
-              sprintf "%d RAW sans JPG (%s…)"
-                  scan.OrphanRaws.Length
-                  (List.head scan.OrphanRaws) ]
+    let duplicates = scan.DuplicateJpgs.Length + scan.DuplicateRaws.Length
 
-    let orphanSuffix =
-        if List.isEmpty orphanNotes then ""
-        else " Orphelins : " + String.concat ", " orphanNotes
+    let nothingToDo =
+        List.isEmpty scan.TandemsToOrganize
+        && List.isEmpty scan.CrossedTandems
+        && List.isEmpty scan.InvertedTandems
+        && List.isEmpty scan.OrphanRawsToOrganize
+        && List.isEmpty scan.OrphanJpgsInRaw
+        && duplicates = 0
+        && List.isEmpty scan.CaseCollisions
+        && scan.RawFolderIssue.IsNone
 
-    sprintf
-        "%s%d tandems JPG+RAW détectés.%s"
-        SuccessStatusPrefix
-        scan.Tandems.Length
-        orphanSuffix
+    let anomalyNote =
+        match scan.RawFolderIssue with
+        | Some RawFolderIsFile ->
+            Some(sprintf " « %s » existe mais est un fichier : organisation impossible." RawSubfolderName)
+        | Some (RawFolderCaseMismatch foundName) ->
+            Some(sprintf " Dossier « %s » mal cassé : « %s » n'existe pas." foundName RawSubfolderName)
+        | None -> None
+
+    let baseStatus =
+        if nothingToDo then
+            sprintf
+                "%sDossier déjà organisé : %d tandems, rien à remettre en ordre."
+                SuccessStatusPrefix
+                scan.OrganizedTandems.Length
+        else
+            sprintf
+                "%s%d tandems à organiser, %d déjà organisés."
+                SuccessStatusPrefix
+                scan.TandemsToOrganize.Length
+                scan.OrganizedTandems.Length
+
+    match anomalyNote with
+    | Some note -> baseStatus + note
+    | None -> baseStatus
+
+/// Commande asynchrone de scan d'un dossier.
+let private scanCmd (folderPath: string) : Cmd<Msg> =
+    Cmd.OfAsync.either
+        (fun path -> async { return scanFolder path })
+        folderPath
+        FolderScanned
+        (fun ex -> FolderScanFailed ex.Message)
+
+let private inOrganizing (state: State) =
+    match state.Screen with
+    | Working Organizing | Confirming(Organizing, _) -> true
+    | _ -> false
+
+/// Statut de synthèse d'une exécution de plan réussie.
+let private completedStatus (outcome: MoveOutcome) =
+    let rawMoved = outcome.Moved |> List.filter (fun m -> m.Kind = RawToSubfolder) |> List.length
+    let jpgMoved = outcome.Moved |> List.filter (fun m -> m.Kind = JpgToRoot) |> List.length
+    let renamed = outcome.Moved |> List.filter (fun m -> m.Kind = RenameInPlace) |> List.length
+
+    let parts =
+        [ if rawMoved > 0 then
+              sprintf "%d RAW déplacés vers « %s »" rawMoved RawSubfolderName
+          if jpgMoved > 0 then
+              sprintf "%d JPG replacés à la racine" jpgMoved
+          if renamed > 0 then
+              sprintf "%d fichiers renommés (jumeaux de casse)" renamed ]
+
+    if List.isEmpty parts then sprintf "%sRien à déplacer." SuccessStatusPrefix
+    else sprintf "%s%s." SuccessStatusPrefix (String.concat ", " parts)
 
 let update (msg: Msg) (state: State) : State * Cmd<Msg> =
     match msg with
     | FolderSelected path ->
-        // Le scan est asynchrone : la lecture du dossier peut être lente.
         { state with
             FolderPath = Some path
             Status = "Analyse du dossier…" },
-        Cmd.OfAsync.either
-            (fun path -> async { return scanFolder path })
-            path
-            FolderScanned
-            (fun ex -> FolderScanFailed ex.Message)
+        scanCmd path
 
     | FolderScanned scan ->
         { state with
@@ -131,74 +200,64 @@ let update (msg: Msg) (state: State) : State * Cmd<Msg> =
             Status = sprintf "%sAnalyse du dossier impossible : %s" ErrorStatusPrefix error },
         Cmd.none
 
-    | MoveRawsRequested ->
+    // ---------- Organisation ----------
+
+    | OrganizeRequested ->
         match state.Screen with
         | Working Organizing ->
-            if List.isEmpty state.Scan.Tandems then
-                // Aucun tandem : le plan est trivialement vide, pas d'I/O nécessaire.
-                { state with Status = "Aucun RAW à déplacer." }, Cmd.none
-            else
-                match state.FolderPath with
-                | None ->
-                    { state with Status = sprintf "%sAucun dossier analysé." ErrorStatusPrefix }, Cmd.none
-                | Some folder ->
-                    // Le plan (File.Exists par tandem) est calculé dans une commande
-                    // asynchrone : update reste hors du thread d'I/O.
-                    { state with Status = "Préparation du déplacement…" },
-                    Cmd.OfAsync.either
-                        (fun (folder, tandems) -> async { return planRawMoves folder tandems })
-                        (folder, state.Scan.Tandems)
-                        MoveRawsPlanned
-                        (fun ex -> MoveRawsPlanningFailed ex.Message)
-        | Working _ | Confirming _ ->
-            // Le bouton n'est rendu qu'à l'écran d'organisation ; garde défensive.
-            state, Cmd.none
+            match state.Scan.RawFolderIssue with
+            | Some RawFolderIsFile ->
+                { state with
+                    Status = sprintf "%s« %s » existe mais est un fichier : renommez-le pour pouvoir organiser." ErrorStatusPrefix RawSubfolderName },
+                Cmd.none
+            | _ ->
+                if fixableCount state.Scan = 0 then
+                    { state with Status = "Rien à remettre en ordre." }, Cmd.none
+                else
+                    match state.FolderPath with
+                    | None ->
+                        { state with Status = sprintf "%sAucun dossier analysé." ErrorStatusPrefix }, Cmd.none
+                    | Some folder ->
+                        // Le plan (File.Exists par déplacement) est calculé dans une
+                        // commande asynchrone : update reste hors du thread d'I/O.
+                        { state with Status = "Préparation du plan…" },
+                        Cmd.OfAsync.either
+                            (fun (folder, scan) -> async { return planOrganization folder scan })
+                            (folder, state.Scan)
+                            OrganizePlanned
+                            (fun ex -> OrganizePlanningFailed ex.Message)
+        | Working _ | Confirming _ -> state, Cmd.none
 
-    | MoveRawsPlanned plan ->
+    | OrganizePlanned plan ->
         match state.Screen with
         | Working Organizing ->
             if List.isEmpty plan.Moves then
-                let status =
-                    if List.isEmpty plan.Collisions then
-                        "Aucun RAW à déplacer."
-                    else
-                        sprintf
-                            "Aucun RAW à déplacer : %d fichiers déjà présents dans « %s »."
-                            plan.Collisions.Length
-                            RawSubfolderName
-
-                { state with Status = status }, Cmd.none
+                { state with Status = "Rien à remettre en ordre." }, Cmd.none
             else
-                let collisionNote =
-                    if List.isEmpty plan.Collisions then ""
-                    else
-                        sprintf
-                            "%d RAW déjà présents dans « %s » seront ignorés."
-                            plan.Collisions.Length
-                            RawSubfolderName
+                let rawMoves = plan.Moves |> List.filter (fun m -> m.Kind = RawToSubfolder) |> List.length
+                let jpgMoves = plan.Moves |> List.filter (fun m -> m.Kind = JpgToRoot) |> List.length
 
                 { state with
-                    Screen = Confirming(Organizing, MoveRawFiles plan.Moves.Length)
-                    Status = collisionNote },
+                    Screen = Confirming(Organizing, OrganizeFolder(rawMoves, jpgMoves)) },
                 Cmd.none
         | Working _ | Confirming _ ->
             // L'utilisateur a quitté l'organisation : le plan est obsolète.
             state, Cmd.none
 
-    | MoveRawsPlanningFailed error ->
+    | OrganizePlanningFailed error ->
         match state.Screen with
         | Working Organizing ->
             { state with
-                Status = sprintf "%sPréparation du déplacement impossible : %s" ErrorStatusPrefix error },
+                Status = sprintf "%sPréparation du plan impossible : %s" ErrorStatusPrefix error },
             Cmd.none
         | Working _ | Confirming _ -> state, Cmd.none
 
-    | MoveRawsConfirmed ->
+    | OrganizeConfirmed ->
         match state.Screen with
-        | Confirming(Organizing, MoveRawFiles _) ->
-            // Le plan est recalculé dans la commande d'exécution : les fichiers ont pu
-            // changer depuis la demande. L'exécution ne se déclenche qu'une fois : plus
-            // d'écran de confirmation pendant le déplacement.
+        | Confirming(Organizing, OrganizeFolder _) ->
+            // Le plan est recalculé dans la commande d'exécution : les fichiers
+            // ont pu changer depuis la demande. Plus d'écran de confirmation
+            // pendant l'exécution, donc aucune double exécution possible.
             match state.FolderPath with
             | None ->
                 { state with
@@ -208,80 +267,207 @@ let update (msg: Msg) (state: State) : State * Cmd<Msg> =
             | Some folder ->
                 { state with
                     Screen = Working Organizing
-                    Status = "Déplacement des RAW en cours…" },
+                    Status = "Organisation en cours…" },
                 Cmd.OfAsync.either
-                    (fun tandems -> async {
-                        let plan = planRawMoves folder tandems
+                    (fun scan -> async {
+                        let plan = planOrganization folder scan
 
                         if List.isEmpty plan.Moves then
-                            return MoveRawsNothingToMove plan.Collisions.Length
+                            return OrganizeNothingToMove
                         else
-                            return MoveRawsCompleted(applyRawMovePlan plan)
+                            return OrganizeCompleted(applyOrganization plan)
                     })
-                    state.Scan.Tandems
+                    state.Scan
                     id
-                    (fun ex -> MoveRawsFailed ex.Message)
+                    (fun ex -> OrganizeFailed ex.Message)
         | Confirming _ | Working _ -> reportUnexpectedConfirmation state
 
-    | MoveRawsNothingToMove collisions ->
-        match state.Screen with
-        | Working Organizing ->
+    | OrganizeCompleted outcome ->
+        if List.isEmpty outcome.Failed then
+            if inOrganizing state then
+                { state with
+                    Screen = Working Triaging
+                    Status = completedStatus outcome },
+                Cmd.none
+            else
+                { state with Status = completedStatus outcome }, Cmd.none
+        else
+            let failedMove, failedReason = List.head outcome.Failed
+
             { state with
+                Screen = Working Organizing
                 Status =
                     sprintf
-                        "%sAucun RAW déplacé : %d fichiers déjà présents dans « %s »."
+                        "%s%d déplacements effectués, %d en échec (ex. %s : %s)."
                         ErrorStatusPrefix
-                        collisions
-                        RawSubfolderName },
+                        outcome.Moved.Length
+                        outcome.Failed.Length
+                        (Path.GetFileName failedMove.SourcePath)
+                        failedReason },
             Cmd.none
+
+    | OrganizeNothingToMove ->
+        match state.Screen with
+        | Working Organizing ->
+            { state with Status = "Rien à déplacer : le dossier a changé entre-temps." }, Cmd.none
         | Working _ | Confirming _ -> state, Cmd.none
 
-    | MoveRawsCompleted outcome ->
-        if List.isEmpty outcome.Failed then
-            let status =
-                sprintf
-                    "%s%d RAW déplacés vers le sous-dossier « %s »."
-                    SuccessStatusPrefix
-                    outcome.Moved.Length
-                    RawSubfolderName
-
-            match state.Screen with
-            | Working Organizing | Confirming(Organizing, _) ->
-                // Succès complet : confirmation affichée puis passage au tri.
-                { state with Screen = Working Triaging; Status = status }, Cmd.none
-            | Working _ | Confirming _ ->
-                { state with Status = status }, Cmd.none
-        else
-            let failedFile, failedReason = List.head outcome.Failed
-
-            let status =
-                sprintf
-                    "%s%d RAW déplacés, %d en échec (ex. %s : %s)."
-                    ErrorStatusPrefix
-                    outcome.Moved.Length
-                    outcome.Failed.Length
-                    (Path.GetFileName failedFile.SourcePath)
-                    failedReason
-
-            { state with
-                Screen = Working Organizing
-                Status = status },
-            Cmd.none
-
-    | MoveRawsFailed error ->
+    | OrganizeFailed error ->
         { state with
             Screen = Working Organizing
-            Status = sprintf "%sDéplacement impossible : %s" ErrorStatusPrefix error },
+            Status = sprintf "%sOrganisation impossible : %s" ErrorStatusPrefix error },
         Cmd.none
 
-    | MoveRawsCancelled ->
+    | OrganizeCancelled ->
         match state.Screen with
-        | Confirming(Organizing, MoveRawFiles _) ->
+        | Confirming(Organizing, OrganizeFolder _) ->
             { state with
                 Screen = Working Organizing
-                Status = "Déplacement des RAW annulé." },
+                Status = "Organisation annulée." },
             Cmd.none
         | Working _ | Confirming _ -> state, Cmd.none
+
+    // ---------- Résolution des doublons ----------
+
+    | ResolveDuplicatesRequested ->
+        match state.Screen with
+        | Working Organizing ->
+            let count =
+                state.Scan.DuplicateJpgs.Length
+                + state.Scan.DuplicateRaws.Length
+                + state.Scan.CaseCollisions.Length
+
+            if count = 0 then
+                { state with Status = "Aucun doublon." }, Cmd.none
+            else
+                { state with Screen = Confirming(Organizing, ResolveDuplicates count) }, Cmd.none
+        | Working _ | Confirming _ -> state, Cmd.none
+
+    | ResolveDuplicatesConfirmed ->
+        match state.Screen with
+        | Confirming(Organizing, ResolveDuplicates _) ->
+            match state.FolderPath with
+            | None ->
+                { state with
+                    Screen = Working Organizing
+                    Status = sprintf "%sAucun dossier analysé." ErrorStatusPrefix },
+                Cmd.none
+            | Some folder ->
+                { state with
+                    Screen = Working Organizing
+                    Status = "Résolution des doublons en cours…" },
+                Cmd.OfAsync.either
+                    (fun scan -> async {
+                        let plan = planDuplicateResolution folder scan
+                        return ResolveDuplicatesCompleted(applyOrganization plan)
+                    })
+                    state.Scan
+                    id
+                    (fun ex -> ResolveDuplicatesFailed ex.Message)
+        | Confirming _ | Working _ -> reportUnexpectedConfirmation state
+
+    | ResolveDuplicatesCompleted outcome ->
+        match state.Screen with
+        | Working Organizing | Confirming(Organizing, _) ->
+            if List.isEmpty outcome.Failed then
+                { state with
+                    Status = sprintf "%s%d doublons et jumeaux de casse renommés et rangés." SuccessStatusPrefix outcome.Moved.Length },
+                Cmd.none
+            else
+                let failedMove, failedReason = List.head outcome.Failed
+
+                { state with
+                    Status =
+                        sprintf
+                            "%s%d anomalies résolues, %d en échec (ex. %s : %s)."
+                            ErrorStatusPrefix
+                            outcome.Moved.Length
+                            outcome.Failed.Length
+                            (Path.GetFileName failedMove.SourcePath)
+                            failedReason },
+                Cmd.none
+        | Working _ | Confirming _ -> state, Cmd.none
+
+    | ResolveDuplicatesFailed error ->
+        { state with
+            Screen = Working Organizing
+            Status = sprintf "%sRésolution des doublons impossible : %s" ErrorStatusPrefix error },
+        Cmd.none
+
+    | ResolveDuplicatesCancelled ->
+        match state.Screen with
+        | Confirming(Organizing, ResolveDuplicates _) ->
+            { state with
+                Screen = Working Organizing
+                Status = "Résolution des doublons annulée." },
+            Cmd.none
+        | Working _ | Confirming _ -> state, Cmd.none
+
+    // ---------- Normalisation du nom du dossier RAW ----------
+
+    | NormalizeRawFolderRequested ->
+        match state.Screen with
+        | Working Organizing ->
+            match state.Scan.RawFolderIssue with
+            | Some(RawFolderCaseMismatch foundName) ->
+                { state with Screen = Confirming(Organizing, NormalizeRawFolder foundName) }, Cmd.none
+            | _ ->
+                { state with Status = "Aucun dossier mal cassé à renommer." }, Cmd.none
+        | Working _ | Confirming _ -> state, Cmd.none
+
+    | NormalizeRawFolderConfirmed ->
+        match state.Screen with
+        | Confirming(Organizing, NormalizeRawFolder foundName) ->
+            match state.FolderPath with
+            | None ->
+                { state with
+                    Screen = Working Organizing
+                    Status = sprintf "%sAucun dossier analysé." ErrorStatusPrefix },
+                Cmd.none
+            | Some folder ->
+                { state with
+                    Screen = Working Organizing
+                    Status = "Renommage du dossier en cours…" },
+                Cmd.OfAsync.either
+                    (fun name -> async {
+                        do normalizeRawFolderName folder name
+                        return NormalizeRawFolderCompleted
+                    })
+                    foundName
+                    id
+                    (fun ex -> NormalizeRawFolderFailed ex.Message)
+        | Confirming _ | Working _ -> reportUnexpectedConfirmation state
+
+    | NormalizeRawFolderCompleted ->
+        // Le scan est obsolète : le contenu du dossier renommé devient visible.
+        match state.FolderPath with
+        | Some folder ->
+            { state with
+                Screen = Working Organizing
+                Status = sprintf "%sDossier renommé en « %s », nouvelle analyse…" SuccessStatusPrefix RawSubfolderName },
+            scanCmd folder
+        | None ->
+            { state with
+                Screen = Working Organizing
+                Status = sprintf "%sDossier renommé en « %s »." SuccessStatusPrefix RawSubfolderName },
+            Cmd.none
+
+    | NormalizeRawFolderFailed error ->
+        { state with
+            Screen = Working Organizing
+            Status = sprintf "%sRenommage impossible : %s" ErrorStatusPrefix error },
+        Cmd.none
+
+    | NormalizeRawFolderCancelled ->
+        match state.Screen with
+        | Confirming(Organizing, NormalizeRawFolder _) ->
+            { state with
+                Screen = Working Organizing
+                Status = "Renommage du dossier annulé." },
+            Cmd.none
+        | Working _ | Confirming _ -> state, Cmd.none
+
+    // ---------- Tri ----------
 
     | StartTriagingClicked ->
         match state.Screen with
@@ -293,7 +479,7 @@ let update (msg: Msg) (state: State) : State * Cmd<Msg> =
         match state.Screen with
         | Working Triaging ->
             { state with
-                CurrentIndex = previous state.Scan.Tandems.Length state.CurrentIndex },
+                CurrentIndex = previous (triableTandems state).Length state.CurrentIndex },
             Cmd.none
         | Working _ | Confirming _ -> state, Cmd.none
 
@@ -301,14 +487,14 @@ let update (msg: Msg) (state: State) : State * Cmd<Msg> =
         match state.Screen with
         | Working Triaging ->
             { state with
-                CurrentIndex = next state.Scan.Tandems.Length state.CurrentIndex },
+                CurrentIndex = next (triableTandems state).Length state.CurrentIndex },
             Cmd.none
         | Working _ | Confirming _ -> state, Cmd.none
 
     | DeleteTandemRequested ->
         match state.Screen with
         | Working Triaging ->
-            match List.tryItem state.CurrentIndex state.Scan.Tandems with
+            match triableTandems state |> List.tryItem state.CurrentIndex with
             | Some currentTandem ->
                 { state with Screen = Confirming(Triaging, DeleteTandem currentTandem.Stem) }, Cmd.none
             | None ->
@@ -319,12 +505,17 @@ let update (msg: Msg) (state: State) : State * Cmd<Msg> =
         match state.Screen with
         | Confirming(Triaging, DeleteTandem stem) ->
             // Stub : la suppression réelle (corbeille OS) n'est pas encore branchée.
-            let tandems, index =
-                removeWhere (fun (t: Tandem) -> t.Stem = stem) state.Scan.Tandems state.CurrentIndex
+            let toOrganize, _ = removeWhere (fun t -> t.Stem = stem) state.Scan.TandemsToOrganize state.CurrentIndex
+            let organized, _ = removeWhere (fun t -> t.Stem = stem) state.Scan.OrganizedTandems state.CurrentIndex
+
+            // L'index est ajusté sur la liste visible (à organiser + déjà organisés),
+            // pas sur une seule des deux listes : le tandem supprimé peut être
+            // dans l'une ou l'autre.
+            let visibleCount = toOrganize.Length + organized.Length
 
             { state with
-                Scan = { state.Scan with Tandems = tandems }
-                CurrentIndex = index
+                Scan = { state.Scan with TandemsToOrganize = toOrganize; OrganizedTandems = organized }
+                CurrentIndex = bounded visibleCount state.CurrentIndex
                 Screen = Working Triaging
                 Status = sprintf "Action serait : supprimer %s.JPG et %s.RW2 (vers la corbeille)." stem stem },
             Cmd.none

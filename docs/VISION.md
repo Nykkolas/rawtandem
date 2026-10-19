@@ -30,13 +30,15 @@ Un trieur de photos qui considère chaque cliché comme **un couple JPG+RAW** :
 | Cible RAW | `.RW2` uniquement (autres formats en évolution, voir `docs/TODO.md`) |
 | Suppression | Corbeille OS, jamais de suppression définitive |
 | Ouverture de dossier | Sélecteur de dossier natif Avalonia (`StorageProvider.OpenFolderPickerAsync`) ; aucun message si l'utilisateur annule |
-| Scan du dossier | **Racine uniquement** : les sous-dossiers (dont un `RAW/` déjà organisé) sont ignorés |
-| Déplacement (organisation) | **RAW des tandems appariés uniquement** ; les orphelins sont signalés dans le résumé mais laissés en place (action au fichier seul : à décider plus tard) |
-| Collisions | Un RAW déjà présent dans `RAW/` n'est **jamais écrasé** : signalé et ignoré, au plan comme à l'exécution |
-| Après un déplacement réussi | Statut de confirmation (`✓ N RAW déplacés…`) puis **passage automatique au tri** ; en cas d'échec partiel, on reste à l'organisation et chaque échec est signalé |
+| Scan du dossier | **Racine + sous-dossier `RAW/`** ; les autres sous-dossiers sont ignorés en silence |
+| Organisation initiale (itération 3) | Toutes les combinaisons sont classées par l'arbre de décision (9 catégories + anomalies du dossier RAW). Le bouton Organiser propose de remettre dans l'ordre : RAW de la racine (appariés **et orphelins**) → `RAW/`, JPG de `RAW/` (croisés, inversés, orphelins) → racine. Jamais d'écrasement : renommage de secours « stem (n).ext » |
+| Doublons (même nom racine et `RAW/`) | Le fichier hors de sa place rejoint sa place **renommé selon la convention système** (« stem (1).ext », incrémenté) ; jamais détruit ni écrasé ; signalé en orange ; action dédiée avec confirmation |
+| Dossier « raw » mal cassé | Signalé orange, renommage « raw » → « RAW » proposé avec confirmation (si « RAW » n'existe pas) ; « RAW » est un fichier : erreur explicite, Organiser désactivé |
+| Orphelins | Signalés en rouge (nom seul pour l'instant, gestion avancée au TODO), mais pris en compte par l'organisation ; jamais avalés en silence |
+| Dossier déjà organisé | Plan vide, aucun doublon ni anomalie : message dédié, passage direct au tri proposé |
+| Après une organisation réussie | Statut de confirmation puis **passage automatique au tri** ; en cas d'échec partiel, on reste à l'organisation et chaque échec est signalé |
 | Déplacement des tandems (tri) | Non décidé — la décision est attendue de l'utilisateur |
 | Sécurité des données | Le Core calcule un plan d'opérations, l'UI n'exécute que ce plan |
-| Orphelins | JPG sans RAW / RAW sans JPG : affichés dans le résumé du scan et gérés explicitement (action dédiée à implémenter) |
 | Architecture | `src/RawTandem.Core` = domaine pur, réutilisable par n'importe quel front (console, web, GUI), **sans Elmish ni Avalonia** ; la machine à états Elmish (`Msg`, `init`, `update`, `Status`) vit dans `src/RawTandem.UI/State.fs` ; tests Expecto dans `tests/` en miroir |
 | Confirmations | Une action destructive en attente est un écran `Confirming of Phase * PendingAction`, pas un champ optionnel : une confirmation sans action en attente est signalée à l'utilisateur, jamais avalée |
 | Garde des actions | Les messages (navigation, suppression) ne s'appliquent qu'à leur écran, la garde est dans `update` (tout producteur de messages est couvert, raccourcis clavier inclus) |

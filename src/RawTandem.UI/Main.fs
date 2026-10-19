@@ -13,6 +13,7 @@ open Avalonia.FuncUI.Hosts
 open Avalonia.FuncUI.Elmish
 
 open RawTandem.Core.Constants
+open RawTandem.Core.FolderScan
 open RawTandem.UI.State
 
 // ========== Dispatch (branchement temporaire des raccourcis clavier) ==========
@@ -70,14 +71,47 @@ let private statusView (state: State) =
     ]
 
 let private confirmationView (action: PendingAction) (dispatch: Msg -> unit) =
-    let question, confirmMsg, cancelMsg =
+    let question, confirmLabel, confirmMsg, cancelMsg =
         match action with
-        | MoveRawFiles count ->
-            sprintf "Déplacer %d RAW vers le sous-dossier « %s » ?" count RawSubfolderName,
-            MoveRawsConfirmed,
-            MoveRawsCancelled
+        | OrganizeFolder (rawMoves, jpgMoves) ->
+            let moveQuestion =
+                match rawMoves, jpgMoves with
+                | r, 0 ->
+                    sprintf
+                        "Déplacer %d fichiers .RW2 de la racine vers le sous-dossier « %s » ? (RAW sans JPG inclus)"
+                        r
+                        RawSubfolderName
+                | 0, j ->
+                    sprintf "Replacer %d JPG du sous-dossier « %s » à la racine ?" j RawSubfolderName
+                | r, j ->
+                    sprintf
+                        "Déplacer %d fichiers .RW2 vers le sous-dossier « %s » et replacer %d JPG de « %s » à la racine ?"
+                        r
+                        RawSubfolderName
+                        j
+                        RawSubfolderName
+            moveQuestion, "Déplacer", OrganizeConfirmed, OrganizeCancelled
+        | ResolveDuplicates count ->
+            sprintf
+                "Résoudre les %d doublons et jumeaux de casse ? Chaque fichier sera déplacé à sa place ou renommé (« nom (1).ext »). Aucun fichier n'est écrasé ni supprimé."
+                count,
+            "Résoudre",
+            ResolveDuplicatesConfirmed,
+            ResolveDuplicatesCancelled
+        | NormalizeRawFolder foundName ->
+            sprintf
+                "Renommer le dossier « %s » en « %s » ? Ses fichiers seront ensuite pris en compte."
+                foundName
+                RawSubfolderName,
+            "Renommer",
+            NormalizeRawFolderConfirmed,
+            NormalizeRawFolderCancelled
         | DeleteTandem stem ->
-            sprintf "Supprimer le tandem %s.JPG + %s.RW2 ?" stem stem,
+            sprintf
+                "Supprimer le tandem %s.JPG + %s.RW2 ? Les deux fichiers iront dans la corbeille (récupérables)."
+                stem
+                stem,
+            "Supprimer",
             DeleteTandemConfirmed,
             DeleteTandemCancelled
 
@@ -98,7 +132,7 @@ let private confirmationView (action: PendingAction) (dispatch: Msg -> unit) =
                         StackPanel.spacing 8.0
                         StackPanel.children [
                             Button.create [
-                                Button.content "Confirmer"
+                                Button.content confirmLabel
                                 Button.onClick (fun _ -> dispatch confirmMsg)
                             ]
                             Button.create [
@@ -143,13 +177,56 @@ let private homeView (dispatch: Msg -> unit) =
 
 let private organizingView (state: State) (dispatch: Msg -> unit) =
     let scan = state.Scan
-    let tandemsCount = scan.Tandems.Length
+    let toOrganize = scan.TandemsToOrganize.Length
+    let organized = scan.OrganizedTandems.Length
+    let duplicates = scan.DuplicateJpgs.Length + scan.DuplicateRaws.Length + scan.CaseCollisions.Length
+    let plannedCount = fixableCount scan
 
-    let orphanLines =
+    let summaryLine =
+        sprintf "%d tandem(s) à organiser, %d déjà organisé(s), %d RAW orphelin(s) à ranger." toOrganize organized scan.OrphanRawsToOrganize.Length
+
+    let namedLine (label: string) (names: string list) =
+        sprintf "%d %s : %s" names.Length label (String.concat ", " names)
+
+    let orphanLines : (string * IBrush) list =
         [ if not (List.isEmpty scan.OrphanJpgs) then
-              sprintf "%d JPG sans RAW : %s" scan.OrphanJpgs.Length (String.concat ", " scan.OrphanJpgs)
-          if not (List.isEmpty scan.OrphanRaws) then
-              sprintf "%d RAW sans JPG : %s" scan.OrphanRaws.Length (String.concat ", " scan.OrphanRaws) ]
+              (namedLine "JPG sans RAW" scan.OrphanJpgs, Brushes.Red)
+          if not (List.isEmpty scan.OrphanRawsToOrganize) then
+              (namedLine "RAW sans JPG, à la racine" scan.OrphanRawsToOrganize, Brushes.Red)
+          if not (List.isEmpty scan.FiledOrphanRaws) then
+              (namedLine "RAW sans JPG, déjà rangés" scan.FiledOrphanRaws, Brushes.Red)
+          if not (List.isEmpty scan.OrphanJpgsInRaw) then
+              (namedLine "JPG isolés dans RAW/" scan.OrphanJpgsInRaw, Brushes.Red) ]
+
+    let caseCollisionLine =
+        if List.isEmpty scan.CaseCollisions then
+            None
+        else
+            let located =
+                scan.CaseCollisions
+                |> List.map (fun c ->
+                    if c.InRawSubfolder then sprintf "%s (dans RAW/)" c.FileName else c.FileName)
+                |> String.concat ", "
+            Some(sprintf "%d jumeau(x) de casse : %s" scan.CaseCollisions.Length located)
+
+    let anomalyLines : (string * IBrush) list =
+        [ if not (List.isEmpty scan.DuplicateJpgs) then
+              (namedLine "doublons JPG (dans RAW/)" scan.DuplicateJpgs, Brushes.DarkOrange)
+          if not (List.isEmpty scan.DuplicateRaws) then
+              (namedLine "doublons RAW (à la racine)" scan.DuplicateRaws, Brushes.DarkOrange)
+          match caseCollisionLine with
+          | Some line -> (line, Brushes.DarkOrange)
+          | None -> ()
+          if not (List.isEmpty scan.CrossedTandems) then
+              (sprintf "%d tandem(s) croisé(s) (JPG dans RAW/, RAW à la racine)" scan.CrossedTandems.Length, Brushes.DarkOrange)
+          if not (List.isEmpty scan.InvertedTandems) then
+              (sprintf "%d tandem(s) inversé(s) (JPG et RAW dans RAW/)" scan.InvertedTandems.Length, Brushes.DarkOrange)
+          match scan.RawFolderIssue with
+          | Some RawFolderIsFile ->
+              (sprintf "« %s » existe mais est un fichier : organisation impossible." RawSubfolderName, Brushes.DarkOrange)
+          | Some (RawFolderCaseMismatch foundName) ->
+              (sprintf "Dossier « %s » mal cassé : « %s » n'existe pas." foundName RawSubfolderName, Brushes.DarkOrange)
+          | None -> () ]
 
     let headerViews : Types.IView list =
         [ TextBlock.create [
@@ -160,41 +237,57 @@ let private organizingView (state: State) (dispatch: Msg -> unit) =
               TextBox.isReadOnly true
               TextBox.text (defaultArg state.FolderPath "")
           ]
-          TextBlock.create [
-              TextBlock.text (sprintf "%d tandems détectés, %d RAW à la racine." tandemsCount tandemsCount)
-          ] ]
+          TextBlock.create [ TextBlock.text summaryLine ] ]
 
-    let orphanViews : Types.IView list =
-        orphanLines
-        |> List.map (fun line ->
+    let namedViews : Types.IView list =
+        (orphanLines @ anomalyLines)
+        |> List.map (fun (line, brush) ->
             TextBlock.create [
                 TextBlock.text line
-                TextBlock.foreground Brushes.DarkOrange
+                TextBlock.foreground brush
             ] :> Types.IView)
 
+    let organizeDisabled =
+        plannedCount = 0
+        || scan.RawFolderIssue = Some RawFolderIsFile
+
+    let renameButton : Types.IView list =
+        match scan.RawFolderIssue with
+        | Some (RawFolderCaseMismatch foundName) ->
+            [ Button.create [
+                  Button.content (sprintf "Renommer « %s » en « %s »" foundName RawSubfolderName)
+                  Button.onClick (fun _ -> dispatch NormalizeRawFolderRequested)
+              ] :> Types.IView ]
+        | _ -> []
+
     let actionViews : Types.IView list =
-        [ Button.create [
-              Button.content (
-                  sprintf "Déplacer les %d RAW dans le sous-dossier « %s »" tandemsCount RawSubfolderName
-              )
-              Button.isEnabled (tandemsCount > 0)
-              Button.onClick (fun _ -> dispatch MoveRawsRequested)
-          ]
-          Button.create [
-              Button.content "Passer directement au tri"
-              Button.onClick (fun _ -> dispatch StartTriagingClicked)
-          ] ]
+        ([ Button.create [
+              Button.content (sprintf "Organiser (%d déplacements)" plannedCount)
+              Button.isEnabled (not organizeDisabled)
+              Button.onClick (fun _ -> dispatch OrganizeRequested)
+           ] :> Types.IView
+           Button.create [
+               Button.content (sprintf "Résoudre les %d doublons et jumeaux de casse (renommage)" duplicates)
+               Button.isEnabled (duplicates > 0)
+               Button.onClick (fun _ -> dispatch ResolveDuplicatesRequested)
+           ] :> Types.IView ]
+         @ renameButton
+         @ [ Button.create [
+                Button.content "Passer directement au tri"
+                Button.onClick (fun _ -> dispatch StartTriagingClicked)
+            ] :> Types.IView ])
 
     StackPanel.create [
         StackPanel.margin (Thickness(20.0))
         StackPanel.spacing 12.0
-        StackPanel.children (headerViews @ orphanViews @ actionViews)
+        StackPanel.children (headerViews @ namedViews @ actionViews)
     ]
 
 let private triagingView (state: State) (dispatch: Msg -> unit) =
-    let photoCount = state.Scan.Tandems.Length
+    let visibleTandems = triableTandems state
+    let photoCount = visibleTandems.Length
     let currentStem =
-        state.Scan.Tandems
+        visibleTandems
         |> List.tryItem state.CurrentIndex
         |> Option.map (fun tandem -> tandem.Stem)
 
