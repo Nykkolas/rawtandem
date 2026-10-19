@@ -12,7 +12,7 @@
 - Les demandes directes ("fais", "corrige", "ajoute") restent des autorisations à agir immédiatement.
 
 ### "Audit / review du code"
-- Lire `docs/AUDIT.md` et suivre la grille : procédure, thèmes, niveaux de sévérité, format de rapport.
+- Lire `docs/AUDIT.md` (checklist spécifique) et `docs/AUDIT-GENERIC.md` (procédure, thèmes, sévérités, format de rapport).
 - L'audit ne modifie aucun fichier : recommandations uniquement, sauf demande explicite de corriger.
 
 ### "Crée une version x.y.z"
@@ -26,6 +26,15 @@
 - **UI en français** : libellés, statuts, messages affichés à l'utilisateur.
 - La documentation (AGENTS.md, AUDIT.md, TODO.md, README) est en français.
 
+## 📚 Règles partagées (agents-shared, à lire selon le contexte)
+
+Ces fichiers sont des symlinks vers `~/Source/agents-shared/` :
+
+- **F# / Elmish** : lire `docs/FSHARP.md` avant d'écrire ou de modifier du F# (pattern Elmish, commandes async, design with types, aléatoire/crypto, casing, tests).
+- **Avalonia.FuncUI** : lire `docs/AVALONIA.md` avant de toucher l'UI (DSL, types géométriques, contrôles, feedback, clipboard, fenêtre).
+- **Audit générique** : `docs/AUDIT-GENERIC.md`, complété par la checklist locale `docs/AUDIT.md`.
+- **Erreurs transverses** : `docs/ERREURS-GENERIC.md`, leçons génériques à ne pas reproduire ; y promouvoir les leçons locales génériques (procédure dans DECISIONS.md d'agents-shared).
+
 ## 🛡️ Opérations fichiers (sécurité des données)
 
 - **Corbeille OS obligatoire** : jamais de suppression définitive directe (`File.Delete`).
@@ -36,7 +45,7 @@
 - Ne jamais charger un fichier RAW en mémoire pour l'affichage : seul le JPG est visualisé.
 - Gérer explicitement : orphelins (JPG sans RAW, RAW sans JPG), collisions de noms au déplacement.
 
-## 📚 Documentation et Ressources
+## 📖 Documentation et Ressources
 
 - **But de l'application et décisions** : `docs/VISION.md` (à lire au début d'une session ; le mettre à jour à chaque décision structurante)
 - **Async Commands in Avalonia.FuncUI** : [https://brandewinder.com/2025/02/19/async-commands-in-avalonia-funcui/](https://brandewinder.com/2025/02/19/async-commands-in-avalonia-funcui/)
@@ -60,95 +69,6 @@
 
 ---
 
-## F# / Elmish
-
-### Pattern Elmish
-- **State** : Toujours immutable. Utiliser `with` pour les mises à jour.
-- **Msg** : Utiliser des Discriminated Unions pour les messages.
-- **init** : Doit retourner `State * Cmd<Msg>`.
-- **update** : Doit retourner `State * Cmd<Msg>`. Gérer tous les cas de Msg.
-
-### Commandes asynchrones
-- **Avec gestion d'erreur** : Utiliser `Cmd.OfAsync.either`
-  ```fsharp
-  Cmd.OfAsync.either
-      asyncFn
-      ()
-      (fun result -> OperationSucceeded result)
-      (fun ex -> OperationFailed ex.Message)
-  ```
-- **Sans gestion d'erreur** : Utiliser `Cmd.OfAsync.perform`
-  ```fsharp
-  Cmd.OfAsync.perform
-      asyncFn
-      OperationSucceeded
-      (fun ex -> OperationFailed ex.Message)
-  ```
-
----
-
-## Avalonia.FuncUI
-
-### Structure DSL
-- **StackPanel** : Toujours utiliser `StackPanel.children` pour les éléments enfants.
-  ```fsharp
-  StackPanel.create [
-      StackPanel.margin (Thickness 20.0)
-      StackPanel.children [
-          Button.create [...]
-          TextBlock.create [...]
-      ]
-  ]
-  ```
-
-### Syntaxe des types géométriques
-- **Toujours utiliser des parenthèses** :
-  - ✅ `Thickness(12.0, 8.0)`
-  - ❌ `Thickness 12.0, 8.0`
-  - ✅ `CornerRadius(4.0)`
-  - ❌ `CornerRadius 4.0`
-
-### Lists
-- **Ne pas utiliser `yield`/`yield!`** dans des listes simples. Utiliser `@` pour fusionner :
-  ```fsharp
-  // ✅ Bon
-  Button.create (commonStyle @ [Button.content "OK"])
-
-  // ❌ Éviter
-  Button.create [ yield! commonStyle; Button.content "OK" ]
-  ```
-
-### Contrôles
-- **TextBox** : Pour du texte sélectionnable. Utiliser `isReadOnly true` pour éviter les modifications.
-- **TextBlock** : Pour du texte statique.
-- **Button.content** : Peut contenir du texte ou des emojis.
-
----
-
-## UI/UX
-
-### Feedback utilisateur
-- **Statuts** : Un seul champ `Status` dans le State pour tous les messages.
-- **Couleurs** :
-  - Vert (`Brushes.Green`) pour les succès
-  - Rouge (`Brushes.Red`) pour les échecs
-  - Noir par défaut
-- **Préfixe succès** : Utiliser `✓ ` (checkmark + espace) devant les messages de succès.
-
-### Disposition
-- **Boutons et statuts** : Regrouper chaque bouton avec son statut dans un `StackPanel` horizontal.
-- **Espacement** : Utiliser `StackPanel.spacing` pour l'espacement entre les enfants.
-
----
-
-## Avalonia Spécifique
-
-### Fenêtre
-- **Taille** : Définir `Width` et `Height` dans `MainWindow`.
-- **Position** : `WindowStartupLocation.CenterScreen` pour centrer.
-
----
-
 ## Bonnes pratiques générales
 
 ### TDD
@@ -168,21 +88,12 @@
 
 ---
 
-## Erreurs à ne pas reproduire
+## ❌ Erreurs à ne pas reproduire (spécifiques à ce projet)
 
-1. ❌ Oublier `StackPanel.children` → Erreur : `IView` incompatible avec `IAttr`
-2. ❌ `Thickness 12.0, 8.0` sans parenthèses → Erreur de compilation
-3. ❌ `CornerRadius 4.0` sans parenthèses → Erreur de compilation
-4. ❌ Utiliser `yield` dans une liste simple → Comportement inattendu
-5. ❌ Supprimer un fichier directement (`File.Delete`) au lieu de la corbeille OS → Perte de données irréversible
-6. ❌ Comparer les extensions en tenant compte de la casse → `P1230001.jpg` et `P1230001.RW2` doivent être reconnus comme un couple
-7. ❌ Charger un RAW en mémoire pour l'affichage → latence énorme, risque de saturation mémoire
-8. ❌ Mettre `init`/`update`/`Msg` ou des textes UI dans le Core → le domaine doit rester réutilisable (console, web, GUI) ; la machine à états Elmish vit dans l'UI
+Les erreurs génériques F#/Avalonia (DSL, parenthèses, `yield`, clipboard) vivent dans
+`docs/FSHARP.md` et `docs/AVALONIA.md` ; les erreurs transverses dans `docs/ERREURS-GENERIC.md`.
 
----
-
-## Programme Elmish
-
-- Utiliser `Program.mkProgram` quand `init` et `update` retournent `State * Cmd<Msg>`.
-- Utiliser `Program.mkSimple` seulement si pas de Cmd.
-- Toujours utiliser `Program.withHost this` et `Program.runWithAvaloniaSyncDispatch ()` pour Avalonia.
+1. ❌ Supprimer un fichier directement (`File.Delete`) au lieu de la corbeille OS → Perte de données irréversible
+2. ❌ Comparer les extensions en tenant compte de la casse → `P1230001.jpg` et `P1230001.RW2` doivent être reconnus comme un couple
+3. ❌ Charger un RAW en mémoire pour l'affichage → latence énorme, risque de saturation mémoire
+4. ❌ Mettre `init`/`update`/`Msg` ou des textes UI dans le Core → le domaine doit rester réutilisable (console, web, GUI) ; la machine à états Elmish vit dans l'UI

@@ -1,0 +1,1 @@
+../../agents-shared/erreurs-generiques.md
