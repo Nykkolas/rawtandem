@@ -4,4 +4,7 @@ dist/
 .vs/
 *.user
 
+TestResults/
+coveragereport/
+
 .fake

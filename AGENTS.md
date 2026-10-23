@@ -71,6 +71,9 @@ Ces fichiers sont des symlinks vers `~/Source/agents-shared/` :
 
 ## Bonnes pratiques générales
 
+### Versions
+- Dernières versions stables disponibles par défaut (packages, outils, SDK) ; une version plus ancienne n'est retenue que sur exception justifiée et documentée. Règle transverse détaillée dans `DECISIONS.md` d'agents-shared (« Préférences d'outillage »).
+
 ### TDD
 - Approche par défaut pour les corrections et nouvelles fonctionnalités : écrire d'abord le test qui échoue, le voir échouer, puis corriger le code, puis revérifier (rouge/vert).
 - Chaque bug corrigé doit avoir son test de non-régression.

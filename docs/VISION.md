@@ -43,6 +43,7 @@ Un trieur de photos qui considère chaque cliché comme **un couple JPG+RAW** :
 | Confirmations | Une action destructive en attente est un écran `Confirming of Phase * PendingAction`, pas un champ optionnel : une confirmation sans action en attente est signalée à l'utilisateur, jamais avalée |
 | Garde des actions | Les messages (navigation, suppression) ne s'appliquent qu'à leur écran, la garde est dans `update` (tout producteur de messages est couvert, raccourcis clavier inclus) |
 | Raccourcis clavier | ← / → pour la navigation, `Suppr` pour demander la suppression d'un tandem |
+| Couverture de code | Via `coverlet.collector` + `YoloDev.Expecto.TestSdk` (tests exécutés par `dotnet test`, pas d'EXE dédié — préférence transverse consignée dans agents-shared `DECISIONS.md`) ; installée le 2026-10-23, rapport ReportGenerator dans `coveragereport/` |
 
 ## Hors périmètre (pour l'instant)
 

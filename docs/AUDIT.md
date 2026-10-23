@@ -43,5 +43,6 @@ Le thème générique est dans `docs/AUDIT-GENERIC.md`. Instances spécifiques a
 - [ ] Cas limites couverts : dossier vide, JPG sans RAW, RAW sans JPG, extensions en majuscules/minuscules, stems identiques.
 - [ ] Un test = un comportement, nom du test décrit l'attente.
 - [ ] `dotnet build` puis `dotnet test` au vert avant de rapporter.
+- [ ] Couverture exécutée pendant l'audit : `dotnet test --collect:"XPlat Code Coverage"` puis ReportGenerator (`reportgenerator -reports:"tests/*/TestResults/*/coverage.cobertura.xml" -targetdir:coveragereport`). Le rapport est analysé (taux par module, lignes et branches non couvertes dans `RawTandem.Core` et `RawTandem.UI.State`) et chaque zone faible devient une préconisation. Le wiring Avalonia (`App`/`Main`/`Program`, attendu à 0 % en headless) est hors périmètre de l'analyse.
 
 Le format du rapport (tableau trié par sévérité + conclusion) est défini dans `docs/AUDIT-GENERIC.md`.

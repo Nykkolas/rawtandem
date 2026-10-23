@@ -19,6 +19,7 @@ Cases à cocher en Markdown : `[ ]` → `[x]` (cliquable aussi dans l'UI web Git
 - [ ] Vue de tri : bouton pour ouvrir un autre dossier sans repasser par l'accueil
 - [ ] Vue liste (éventuellement avec aperçu) pour sauter rapidement d'une photo à l'autre, en plus de Précédent/Suivant
 - [ ] Gestion d'erreur façon Railway Oriented Programming dans le Core : `Result<'a, TandemError>` via [FsToolkit.ErrorHandling](https://github.com/demystifyfp/FsToolkit.ErrorHandling), à appliquer à l'appariement et aux plans d'opérations
+- [x] Couverture de code : `coverlet.collector` + `Microsoft.NET.Test.Sdk` + `YoloDev.Expecto.TestSdk` (adaptateur VSTest moderne — les packages historiques `Expecto.TestAdapter` et `Expecto.VisualStudio.TestAdapter` sont dépubliés/obsolètes), avec `GenerateProgramFile=false` pour garder le `[<EntryPoint>]` Expecto ; exécution via `dotnet test` (pas d'EXE dédié), collecte `--collect:"XPlat Code Coverage"`, rapport ReportGenerator dans `coveragereport/` ; résultat initial : Core 98,7 %, UI 41,5 % (App/Main/Program = wiring Avalonia non couvert en headless)
 
 ## Évolutions
 
