@@ -16,7 +16,8 @@ Cases à cocher en Markdown : `[ ]` → `[x]` (cliquable aussi dans l'UI web Git
 - [ ] Suppression d'un tandem JPG+RAW vers la corbeille OS (`gio trash` sous Linux)
 - [ ] UI minimale : ~~choisir un dossier~~ (fait) ; visualiser un JPG ; supprimer le tandem
 - [ ] Déplacement des tandems : décision à prendre (destinations nommées / sélection à la volée / destination fixe), puis implémentation
-- [ ] Vue de tri : bouton pour ouvrir un autre dossier sans repasser par l'accueil
+- [x] Vue de tri : bouton pour ouvrir un autre dossier sans repasser par l'accueil — fait : « Ouvrir un autre dossier… » en organisation (en-tête) et en tri (barre du haut), désactivé pendant qu'une question est affichée ; Ctrl+O attendra la subscription Elmish qui remplacera le hack clavier
+- [ ] Retouche externe : ouvrir une application de retouche d'un clic — sur le dossier (photo courante du tri) ou sur une photo en particulier ; application à choisir/configurer (par défaut, celle que l'OS associe au type de fichier)
 - [ ] Vue liste (éventuellement avec aperçu) pour sauter rapidement d'une photo à l'autre, en plus de Précédent/Suivant
 - [ ] Gestion d'erreur façon Railway Oriented Programming dans le Core : `Result<'a, TandemError>` via [FsToolkit.ErrorHandling](https://github.com/demystifyfp/FsToolkit.ErrorHandling), à appliquer à l'appariement et aux plans d'opérations
 - [x] Couverture de code : `coverlet.collector` + `Microsoft.NET.Test.Sdk` + `YoloDev.Expecto.TestSdk` (adaptateur VSTest moderne — les packages historiques `Expecto.TestAdapter` et `Expecto.VisualStudio.TestAdapter` sont dépubliés/obsolètes), avec `GenerateProgramFile=false` pour garder le `[<EntryPoint>]` Expecto ; exécution via `dotnet test` (pas d'EXE dédié), collecte `--collect:"XPlat Code Coverage"`, rapport ReportGenerator dans `coveragereport/` ; résultat initial : Core 98,7 %, UI 41,5 % (App/Main/Program = wiring Avalonia non couvert en headless)

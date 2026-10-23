@@ -101,6 +101,22 @@ let stateTests =
 
                     Expect.equal state.Screen (Working Home) "retour accueil"
                     Expect.stringContains state.Status "acces refuse" "message d'erreur visible"
+                }
+
+                test "FolderSelected from Triaging keeps the screen until the new scan completes" {
+                    // Parcours UI : l'utilisateur, en train de trier, clique
+                    // « Ouvrir un autre dossier… » et en choisit un. Le bandeau passe
+                    // à « Analyse du dossier… » mais l'écran de tri reste affiché le
+                    // temps de l'analyse ; c'est le scan complété qui ramène à
+                    // l'écran d'organisation du nouveau dossier.
+                    let state = triaging' () |> update' (FolderSelected fixtureFolderPath)
+
+                    Expect.equal state.Screen (Working Triaging) "l'écran courant reste pendant l'analyse"
+                    Expect.stringContains state.Status "Analyse" "analyse annoncée dans le bandeau"
+
+                    let scanned = state |> update' (FolderScanned fixtureScan)
+
+                    Expect.equal scanned.Screen (Working Organizing) "le nouveau dossier s'ouvre à l'organisation"
                 } ]
 
           testList

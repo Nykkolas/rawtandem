@@ -30,6 +30,7 @@ Un trieur de photos qui considère chaque cliché comme **un couple JPG+RAW** :
 | Cible RAW | `.RW2` uniquement (autres formats en évolution, voir `docs/TODO.md`) |
 | Suppression | Corbeille OS, jamais de suppression définitive |
 | Ouverture de dossier | Sélecteur de dossier natif Avalonia (`StorageProvider.OpenFolderPickerAsync`) ; aucun message si l'utilisateur annule |
+| Changement de dossier | « Ouvrir un autre dossier… » disponible sur tous les écrans où un dossier est actif (organisation, tri) ; une question affichée doit être tranchée d'abord (jamais refermée par la navigation) ; l'écran courant reste pendant l'analyse du nouveau dossier |
 | Scan du dossier | **Racine + sous-dossier `RAW/`** ; les autres sous-dossiers sont ignorés en silence |
 | Organisation initiale (itération 3) | Toutes les combinaisons sont classées par l'arbre de décision (9 catégories + anomalies du dossier RAW). Le bouton Organiser propose de remettre dans l'ordre : RAW de la racine (appariés **et orphelins**) → `RAW/`, JPG de `RAW/` (croisés, inversés, orphelins) → racine. Jamais d'écrasement : renommage de secours « stem (n).ext » |
 | Doublons (même nom racine et `RAW/`) | Le fichier hors de sa place rejoint sa place **renommé selon la convention système** (« stem (1).ext », incrémenté) ; jamais détruit ni écrasé ; signalé en orange ; action dédiée avec confirmation |

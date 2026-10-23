@@ -52,6 +52,23 @@ let private pickFolder (source: obj) (dispatch: Msg -> unit) : Async<unit> =
 
 // ========== View helpers ==========
 
+/// La navigation vers un autre dossier est proposée sur chaque écran où un
+/// dossier est actif, mais jamais pendant qu'une question est affichée :
+/// la question doit être tranchée d'abord (jamais refermée à la place de
+/// l'utilisateur, cf. règle de VISION sur les confirmations).
+let private canOpenAnotherFolder (state: State) =
+    match state.Screen with
+    | Confirming _ -> false
+    | Working _ -> true
+
+/// Bouton standard « Ouvrir un autre dossier… », identique sur tous les écrans.
+let private openAnotherFolderButton (state: State) (dispatch: Msg -> unit) : Types.IView =
+    Button.create [
+        Button.content "Ouvrir un autre dossier…"
+        Button.isEnabled (canOpenAnotherFolder state)
+        Button.onClick (fun args -> pickFolder args.Source dispatch |> Async.StartImmediate)
+    ] :> Types.IView
+
 let private statusView (state: State) =
     let statusBrush =
         if state.Status.StartsWith SuccessStatusPrefix then Brushes.Green
@@ -237,6 +254,7 @@ let private organizingView (state: State) (dispatch: Msg -> unit) =
               TextBox.isReadOnly true
               TextBox.text (defaultArg state.FolderPath "")
           ]
+          openAnotherFolderButton state dispatch
           TextBlock.create [ TextBlock.text summaryLine ] ]
 
     let namedViews : Types.IView list =
@@ -302,6 +320,14 @@ let private triagingView (state: State) (dispatch: Msg -> unit) =
 
     DockPanel.create [
         DockPanel.children [
+            Button.create [
+                Button.dock Dock.Top
+                Button.horizontalAlignment HorizontalAlignment.Left
+                Button.margin (Thickness(20.0, 12.0, 0.0, 0.0))
+                Button.isEnabled (canOpenAnotherFolder state)
+                Button.onClick (fun args -> pickFolder args.Source dispatch |> Async.StartImmediate)
+                Button.content "Ouvrir un autre dossier…"
+            ]
             Button.create [
                 Button.dock Dock.Bottom
                 Button.content "Supprimer le tandem"
