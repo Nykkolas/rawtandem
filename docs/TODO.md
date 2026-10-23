@@ -28,9 +28,10 @@ Cases à cocher en Markdown : `[ ]` → `[x]` (cliquable aussi dans l'UI web Git
 - [ ] Orientation EXIF des JPG à l'affichage (portraits stockés horizontaux)
 - [ ] Grille de vignettes paresseuse / performance sur dossiers de plusieurs milliers de photos
 - [ ] Gestion des orphelins (JPG sans RAW, RAW sans JPG) : pour l'instant les orphelins sont signalés en rouge (nom seul) dans le résumé d'organisation et pris en compte par l'arbre de décision ; aller plus loin : action au fichier seul, affichage dédié dans le tri
-- [ ] Workflow CI (build + tests, publication de binaires)
+- [x] Workflow CI : build + tests + couverture au push (GitHub Actions `.github/workflows/tests.yml`, rapport en artifact, badges de couverture séparés Core / State / wiring Avalonia publiés sur la branche `badges`, affichés dans le README)
+- [ ] Publication de binaires en GitHub Release au push d'un tag (workflow de release, voir section « Crée une version x.y.z » d'AGENTS.md)
 
 ## Documentation
 
-- [ ] Fichier README.md (description, captures, build, usage)
+- [x] Fichier README.md minimal (description, badges tests/couverture, build, usage) — captures d'écran et détails d'usage à ajouter quand l'UI sera plus aboutie
 - [ ] Mettre à jour la section « Crée une version x.y.z » d'AGENTS.md quand le workflow CI existera

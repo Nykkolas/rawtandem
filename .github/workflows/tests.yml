@@ -1,0 +1,84 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: Build, tests and code coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Run tests with code coverage
+        run: >-
+          dotnet test
+          --collect:"XPlat Code Coverage"
+
+      - name: Install ReportGenerator
+        run: dotnet tool install --global dotnet-reportgenerator-globaltool
+
+      - name: Generate coverage report
+        run: >-
+          reportgenerator
+          -reports:"tests/*/TestResults/*/coverage.cobertura.xml"
+          -targetdir:coveragereport
+          -reporttypes:"Html;TextSummary"
+
+      - name: Show coverage summary
+        run: cat coveragereport/Summary.txt
+
+      # Badges séparés : Core (domaine pur), State (machine à états Elmish),
+      # Avalonia (wiring App/Main/Program — attendu à 0 % en headless).
+      - name: Generate coverage badges
+        run: |
+          reportgenerator -reports:"tests/RawTandem.Core.Tests/TestResults/*/coverage.cobertura.xml" -targetdir:badge-core -reporttypes:"Badges"
+          reportgenerator -reports:"tests/RawTandem.UI.Tests/TestResults/*/coverage.cobertura.xml" -targetdir:badge-state -reporttypes:"Badges" -classfilters:"+RawTandem.UI.State"
+          reportgenerator -reports:"tests/RawTandem.UI.Tests/TestResults/*/coverage.cobertura.xml" -targetdir:badge-avalonia -reporttypes:"Badges" -classfilters:"+App;+Main;+Program"
+          sed -i 's/>Coverage</>Core</g' badge-core/badge_linecoverage.svg
+          sed -i 's/>Coverage</>State</g' badge-state/badge_linecoverage.svg
+          sed -i 's/>Coverage</>Avalonia</g' badge-avalonia/badge_linecoverage.svg
+
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: |
+            coveragereport/index.html
+            coveragereport/Summary.txt
+            tests/*/TestResults/*/coverage.cobertura.xml
+          if-no-files-found: error
+
+      # Le badge SVG doit être hébergé pour être affiché dans le README ;
+      # branche dédiée « badges », mise à jour seulement au push sur master.
+      - name: Publish coverage badge
+        if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code --heads origin badges > /dev/null; then
+            git fetch origin badges
+            git checkout -B badges origin/badges
+          else
+            git checkout --orphan badges
+          fi
+          git rm -rf --quiet . 2>/dev/null || true
+          cp badge-core/badge_linecoverage.svg ./coverage-core.svg
+          cp badge-state/badge_linecoverage.svg ./coverage-state.svg
+          cp badge-avalonia/badge_linecoverage.svg ./coverage-avalonia.svg
+          git add coverage-core.svg coverage-state.svg coverage-avalonia.svg
+          git commit -m "Update coverage badges [skip ci]" || exit 0
+          git push origin badges
