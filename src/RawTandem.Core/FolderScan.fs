@@ -71,6 +71,12 @@ let findTriableTandem (scan: FolderScan) (stem: string) : (Tandem * RawLocation)
         |> List.tryFind (fun t -> t.Stem = stem)
         |> Option.map (fun tandem -> tandem, InRawSubfolder)
 
+/// Chemin complet du JPG d'un tandem triable (toujours à la racine du
+/// dossier scanné). Le nom de fichier d'origine — casse comprise — est
+/// respecté : c'est lui qui existe sur le disque.
+let tandemJpgPath (folderPath: string) (tandem: Tandem) : string =
+    Path.Combine(folderPath, tandem.JpgFileName)
+
 let private stemOf (fileName: string) = Path.GetFileNameWithoutExtension fileName
 
 let private hasExtension (expected: string) (fileName: string) =
@@ -187,14 +193,17 @@ let private classifyStem
 /// emplacements du JPG et du RAW, orphelins signalés, doublons jamais avalés.
 /// Extensions comparées sans casse ; stems comparés par valeur exacte.
 let scanFolder (folderPath: string) : FolderScan =
+    // Refus explicite d'un dossier absent : sans ce garde, l'exception viendrait
+    // de l'énumération de la détection d'anomalie, avec un message brut
+    // (« Could not find a part of the path ») inexploitable pour un front.
+    if not (Directory.Exists(folderPath)) then
+        invalidOp (sprintf "Folder does not exist: %s" folderPath)
+
     let rawPath = Path.Combine(folderPath, RawSubfolderName)
     let rawDirectoryExists = Directory.Exists(rawPath)
 
     let rootFiles =
-        if Directory.Exists(folderPath) then
-            photosOf (Directory.EnumerateFiles(folderPath) |> Seq.map Path.GetFileName)
-        else
-            []
+        photosOf (Directory.EnumerateFiles(folderPath) |> Seq.map Path.GetFileName)
 
     let rawFiles =
         if rawDirectoryExists then

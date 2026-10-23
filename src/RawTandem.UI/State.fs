@@ -3,6 +3,8 @@ module RawTandem.UI.State
 open System
 open System.IO
 open Elmish
+open Avalonia.Media
+open Avalonia.Media.Imaging
 open RawTandem.Core.Constants
 open RawTandem.Core.Navigation
 open RawTandem.Core.Tandems
@@ -37,6 +39,8 @@ type State =
       /// Résultat du scan du dossier, classé selon l'arbre de décision.
       Scan: FolderScan
       CurrentIndex: int
+      /// JPG du tandem courant, décodé à taille d'affichage (jamais le RAW).
+      CurrentJpg: IImage option
       Status: string }
 
 type Msg =
@@ -66,9 +70,11 @@ type Msg =
     | NextClicked
     | DeleteTandemRequested
     | DeleteTandemConfirmed
-    | DeleteTandemCompleted of stem: string * outcome: DeletionOutcome
+    | DeleteTandemCompleted of folderPath: string * stem: string * outcome: DeletionOutcome
     | DeleteTandemFailed of error: string
     | DeleteTandemCancelled
+    | JpgLoaded of folderPath: string * stem: string * image: IImage
+    | JpgLoadFailed of folderPath: string * stem: string * error: string
 
 // ========== Statuts ==========
 
@@ -97,6 +103,58 @@ let fixableCount (scan: FolderScan) =
 let triableTandems (state: State) =
     state.Scan.TandemsToOrganize @ state.Scan.OrganizedTandems
 
+/// Largeur de décodage des JPG affichés : un cliché TZ200 fait 4896 px de
+/// large ; 2048 px suffisent pour un affichage net dans la fenêtre sans
+/// occuper ~70 Mo de mémoire par photo (une vingtaine seulement).
+[<Literal>]
+let private JpgDecodeWidth = 2048
+
+/// Stem du tandem courant dans le tri (None si la liste est vide).
+let private currentStem (state: State) =
+    triableTandems state
+    |> List.tryItem state.CurrentIndex
+    |> Option.map (fun tandem -> tandem.Stem)
+
+/// Libère la mémoire d'une image : un bitmap décodé n'attend pas le garbage
+/// collector, la navigation reste légère photo après photo.
+let private disposeImage (image: IImage) =
+    match image with
+    | :? Bitmap as bitmap -> bitmap.Dispose()
+    | _ -> ()
+
+/// Un JPG courant ne se charge que sur un écran de tri, avec ou sans question
+/// en attente par-dessus : jamais depuis l'accueil ou l'organisation.
+let private isTriagingScreen (state: State) =
+    match state.Screen with
+    | Working Triaging
+    | Confirming(Triaging, _) -> true
+    | Working Home
+    | Working Organizing
+    | Confirming(Home, _)
+    | Confirming(Organizing, _) -> false
+
+/// Commande de chargement du JPG du tandem courant — jamais le RAW, trop
+/// lourd pour l'affichage. Décodage à largeur bornée, ratio préservé ; le
+/// dossier et le stem voyagent avec le résultat : un stem identique dans un
+/// autre dossier est une autre photo, et un résultat du dossier précédent ne
+/// doit ni s'afficher ni écraser le bandeau du courant.
+let private loadCurrentJpgCmd (state: State) : Cmd<Msg> =
+    match state.FolderPath, triableTandems state |> List.tryItem state.CurrentIndex with
+    | Some folder, Some tandem when isTriagingScreen state ->
+        let path = tandemJpgPath folder tandem
+        let stem = tandem.Stem
+
+        Cmd.OfAsync.either
+            (fun () -> async {
+                use stream = File.OpenRead(path)
+                let bitmap = Bitmap.DecodeToWidth(stream, JpgDecodeWidth, BitmapInterpolationMode.HighQuality)
+                return JpgLoaded(folder, stem, bitmap :> IImage)
+            })
+            ()
+            id
+            (fun ex -> JpgLoadFailed(folder, stem, ex.Message))
+    | _ -> Cmd.none
+
 // ========== Logic ==========
 
 let init () : State * Cmd<Msg> =
@@ -104,6 +162,7 @@ let init () : State * Cmd<Msg> =
       FolderPath = None
       Scan = emptyScan
       CurrentIndex = 0
+      CurrentJpg = None
       Status = "" },
     Cmd.none
 
@@ -194,16 +253,22 @@ let update (msg: Msg) (state: State) : State * Cmd<Msg> =
         scanCmd path
 
     | FolderScanned scan ->
+        state.CurrentJpg |> Option.iter disposeImage
+
         { state with
             Screen = Working Organizing
             Scan = scan
             CurrentIndex = 0
+            CurrentJpg = None
             Status = scanStatus scan },
         Cmd.none
 
     | FolderScanFailed error ->
+        state.CurrentJpg |> Option.iter disposeImage
+
         { state with
             Screen = Working Home
+            CurrentJpg = None
             Status = sprintf "%sAnalyse du dossier impossible : %s" ErrorStatusPrefix error },
         Cmd.none
 
@@ -306,10 +371,8 @@ let update (msg: Msg) (state: State) : State * Cmd<Msg> =
             // une question en attente n'est jamais refermée par un résultat
             // d'arrière-plan, la réussite pas plus que l'échec.
             if state.Screen = Working Organizing then
-                { state with
-                    Screen = Working Triaging
-                    Status = completedStatus outcome },
-                Cmd.none
+                let nextState = { state with Screen = Working Triaging; Status = completedStatus outcome }
+                nextState, loadCurrentJpgCmd nextState
             else
                 { state with Status = completedStatus outcome }, Cmd.none
         else
@@ -483,23 +546,27 @@ let update (msg: Msg) (state: State) : State * Cmd<Msg> =
     | StartTriagingClicked ->
         match state.Screen with
         | Working Organizing ->
-            { state with Screen = Working Triaging; Status = "" }, Cmd.none
+            let nextState = { state with Screen = Working Triaging; Status = "" }
+            nextState, loadCurrentJpgCmd nextState
         | Working _ | Confirming _ -> state, Cmd.none
 
     | PreviousClicked ->
         match state.Screen with
         | Working Triaging ->
-            { state with
-                CurrentIndex = previous (triableTandems state).Length state.CurrentIndex },
-            Cmd.none
+            let nextState =
+                { state with
+                    CurrentIndex = previous (triableTandems state).Length state.CurrentIndex }
+
+            nextState, loadCurrentJpgCmd nextState
         | Working _ | Confirming _ -> state, Cmd.none
 
     | NextClicked ->
         match state.Screen with
         | Working Triaging ->
-            { state with
-                CurrentIndex = next (triableTandems state).Length state.CurrentIndex },
-            Cmd.none
+            let nextState =
+                { state with CurrentIndex = next (triableTandems state).Length state.CurrentIndex }
+
+            nextState, loadCurrentJpgCmd nextState
         | Working _ | Confirming _ -> state, Cmd.none
 
     | DeleteTandemRequested ->
@@ -532,6 +599,8 @@ let update (msg: Msg) (state: State) : State * Cmd<Msg> =
                         Status = sprintf "Le tandem %s n'est plus dans le dossier." stem },
                     Cmd.none
                 | Some(tandem, rawLocation) ->
+                    let stem = tandem.Stem
+
                     { state with
                         Screen = Working Triaging
                         Status = "Suppression en cours…" },
@@ -540,30 +609,40 @@ let update (msg: Msg) (state: State) : State * Cmd<Msg> =
                             // Le plan (chemins complets des deux fichiers) est
                             // calculé dans la commande : les fichiers ont pu
                             // changer depuis la demande.
-                            return applyDeletion (planDeletion folder location tandem)
+                            return DeleteTandemCompleted(folder, stem, applyDeletion (planDeletion folder location tandem))
                         })
                         (tandem, rawLocation)
-                        (fun outcome -> DeleteTandemCompleted(stem, outcome))
+                        id
                         (fun ex -> DeleteTandemFailed ex.Message)
         | Confirming _ | Working _ -> reportUnexpectedConfirmation state
 
-    | DeleteTandemCompleted(stem, outcome) ->
-        // Un résultat d'arrière-plan ne referme jamais une question affichée :
-        // seul le bandeau bas reflète le résultat, l'écran ne change pas.
+    | DeleteTandemCompleted(folder, stem, outcome) ->
+        // Le résultat ne mute le scan que s'il vient du dossier courant : un
+        // stem identique dans un autre dossier est une autre photo. Le bandeau
+        // bas, lui, reflète toujours le résultat (règle VISION : jamais avalé).
+        let isCurrentFolder = state.FolderPath = Some folder
+
         if List.isEmpty outcome.Failed then
-            let toOrganize, _ = removeWhere (fun t -> t.Stem = stem) state.Scan.TandemsToOrganize state.CurrentIndex
-            let organized, _ = removeWhere (fun t -> t.Stem = stem) state.Scan.OrganizedTandems state.CurrentIndex
+            let status = sprintf "%sTandem %s supprimé : %s.JPG et %s.RW2 envoyés à la corbeille." SuccessStatusPrefix stem stem stem
 
-            // L'index est ajusté sur la liste visible (à organiser + déjà organisés),
-            // pas sur une seule des deux listes : le tandem supprimé peut être
-            // dans l'une ou l'autre.
-            let visibleCount = toOrganize.Length + organized.Length
+            if isCurrentFolder then
+                let toOrganize, _ = removeWhere (fun t -> t.Stem = stem) state.Scan.TandemsToOrganize state.CurrentIndex
+                let organized, _ = removeWhere (fun t -> t.Stem = stem) state.Scan.OrganizedTandems state.CurrentIndex
 
-            { state with
-                Scan = { state.Scan with TandemsToOrganize = toOrganize; OrganizedTandems = organized }
-                CurrentIndex = bounded visibleCount state.CurrentIndex
-                Status = sprintf "%sTandem %s supprimé : %s.JPG et %s.RW2 envoyés à la corbeille." SuccessStatusPrefix stem stem stem },
-            Cmd.none
+                // L'index est ajusté sur la liste visible (à organiser + déjà organisés),
+                // pas sur une seule des deux listes : le tandem supprimé peut être
+                // dans l'une ou l'autre.
+                let visibleCount = toOrganize.Length + organized.Length
+
+                let nextState =
+                    { state with
+                        Scan = { state.Scan with TandemsToOrganize = toOrganize; OrganizedTandems = organized }
+                        CurrentIndex = bounded visibleCount state.CurrentIndex
+                        Status = status }
+
+                nextState, loadCurrentJpgCmd nextState
+            else
+                { state with Status = status }, Cmd.none
         else
             // Échec (même partiel) : le tandem reste dans le scan — il est
             // toujours visible au tri — et chaque échec est signalé.
@@ -582,6 +661,35 @@ let update (msg: Msg) (state: State) : State * Cmd<Msg> =
 
     | DeleteTandemFailed error ->
         { state with Status = sprintf "%sSuppression impossible : %s" ErrorStatusPrefix error }, Cmd.none
+
+    // ---------- Affichage du JPG courant ----------
+
+    | JpgLoaded(folder, stem, image) ->
+        // Double critère de fraîcheur : le résultat vient du dossier courant ET
+        // correspond au tandem courant. Un stem identique dans un autre dossier
+        // est une autre photo ; un décodage lent ne doit pas non plus écraser
+        // une navigation clavier plus rapide.
+        if state.FolderPath = Some folder && currentStem state = Some stem then
+            state.CurrentJpg |> Option.iter disposeImage
+            { state with CurrentJpg = Some image }, Cmd.none
+        else
+            disposeImage image
+            state, Cmd.none
+
+    | JpgLoadFailed(folder, stem, error) ->
+        // Un échec obsolète (photo déjà quittée ou dossier changé) n'écrase pas
+        // le bandeau bas. L'échec du tandem courant, lui, est signalé — et ne
+        // laisse pas la photo précédente affichée : l'image ne ment jamais sur
+        // le tandem montré, même en échec.
+        if state.FolderPath = Some folder && currentStem state = Some stem then
+            state.CurrentJpg |> Option.iter disposeImage
+
+            { state with
+                CurrentJpg = None
+                Status = sprintf "%sImpossible d'afficher %s.JPG : %s" ErrorStatusPrefix stem error },
+            Cmd.none
+        else
+            state, Cmd.none
 
     | DeleteTandemCancelled ->
         match state.Screen with

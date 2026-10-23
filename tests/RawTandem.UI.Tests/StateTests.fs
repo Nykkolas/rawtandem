@@ -1,11 +1,20 @@
 module RawTandem.UI.StateTests
 
 open Expecto
+open Avalonia
+open Avalonia.Media
 open RawTandem.Core.Tandems
 open RawTandem.Core.FolderScan
 open RawTandem.Core.Organization
 open RawTandem.Core.Deletion
 open RawTandem.UI.State
+
+/// Image factice pour les tests : seul le fait qu'elle soit l'image courante
+/// (ou une obsolète) compte, jamais les pixels.
+type private FakeImage() =
+    interface IImage with
+        member _.Size = Size(10.0, 10.0)
+        member _.Draw(_, _, _) = ()
 
 let update' (msg: Msg) (state: State) : State =
     update msg state |> fst
@@ -17,6 +26,10 @@ let init' () : State =
 
 /// Chemin factice : le plan ne trouve jamais de cible existante.
 let private fixtureFolderPath = "/dossier-fixture-rawtandem-inexistant"
+
+/// Second dossier factice, pour un changement de dossier pendant qu'une
+/// opération tourne en arrière-plan (stems identiques : même appareil photo).
+let private otherFolderPath = "/autre-dossier-fixture-rawtandem-inexistant"
 
 let private tandem (stem: string) =
     { Stem = stem; JpgFileName = stem + ".JPG"; RawFileName = stem + ".RW2" }
@@ -684,7 +697,7 @@ let stateTests =
                         triaging' ()
                         |> update' DeleteTandemRequested
                         |> update' DeleteTandemConfirmed
-                        |> update' (DeleteTandemCompleted(fixtureStems.[0], deletionTrashed fixtureStems.[0]))
+                        |> update' (DeleteTandemCompleted(fixtureFolderPath, fixtureStems.[0], deletionTrashed fixtureStems.[0]))
 
                     Expect.equal state.Scan.TandemsToOrganize.Length (fixtureStems.Length - 1) "une photo de moins"
                     Expect.equal state.Screen (Working Triaging) "l'écran de tri reste"
@@ -700,7 +713,7 @@ let stateTests =
                         { triaging' () with CurrentIndex = last }
                         |> update' DeleteTandemRequested
                         |> update' DeleteTandemConfirmed
-                        |> update' (DeleteTandemCompleted(fixtureStems.[last], deletionTrashed fixtureStems.[last]))
+                        |> update' (DeleteTandemCompleted(fixtureFolderPath, fixtureStems.[last], deletionTrashed fixtureStems.[last]))
 
                     Expect.equal state.CurrentIndex (last - 1) "index ramené au nouveau dernier"
                 }
@@ -721,7 +734,7 @@ let stateTests =
                         |> (fun s -> { s with CurrentIndex = 3 })
                         |> update' DeleteTandemRequested
                         |> update' DeleteTandemConfirmed
-                        |> update' (DeleteTandemCompleted("P4", deletionTrashed "P4"))
+                        |> update' (DeleteTandemCompleted(fixtureFolderPath, "P4", deletionTrashed "P4"))
 
                     Expect.equal state.Screen (Working Triaging) "retour au tri"
                     Expect.equal state.CurrentIndex 2 "l'index recule au nouveau dernier, pas plus tôt"
@@ -740,7 +753,7 @@ let stateTests =
                         triaging' ()
                         |> update' DeleteTandemRequested
                         |> update' DeleteTandemConfirmed
-                        |> update' (DeleteTandemCompleted("P1", outcome))
+                        |> update' (DeleteTandemCompleted(fixtureFolderPath, "P1", outcome))
 
                     Expect.equal state.Scan.TandemsToOrganize.Length fixtureStems.Length "le tandem reste dans le scan"
                     Expect.equal state.Screen (Working Triaging) "l'écran de tri reste"
@@ -774,7 +787,7 @@ let stateTests =
                         |> update' DeleteTandemConfirmed // suppression de P1 en arrière-plan
                         |> update' NextClicked // il navigue vers P2
                         |> update' DeleteTandemRequested // « Supprimer P2 ? » : question affichée
-                        |> update' (DeleteTandemCompleted(fixtureStems.[0], deletionTrashed fixtureStems.[0]))
+                        |> update' (DeleteTandemCompleted(fixtureFolderPath, fixtureStems.[0], deletionTrashed fixtureStems.[0]))
 
                     Expect.equal state.Screen (Confirming(Triaging, DeleteTandem "P2")) "la question posée reste affichée"
                     Expect.stringContains state.Status SuccessStatusPrefix "la réussite de P1 est visible dans le bandeau bas"
@@ -796,6 +809,139 @@ let stateTests =
                     Expect.equal state.Scan.TandemsToOrganize.Length fixtureStems.Length "rien n'est supprimé"
                     Expect.equal state.Screen (Working Triaging) "retour au tri"
                     Expect.stringContains state.Status "annul" "annulation signalée"
+                } ]
+
+          testList
+              "photo display"
+              [ test "JpgLoaded stores the image of the current photo" {
+                    let state = triaging' () |> update' (JpgLoaded(fixtureFolderPath, fixtureStems.[0], FakeImage()))
+                    Expect.isSome state.CurrentJpg "l'image courante est affichable"
+                }
+
+                test "JpgLoaded replaces the previous image when navigating" {
+                    let firstImage = FakeImage()
+
+                    let state =
+                        triaging' ()
+                        |> update' (JpgLoaded(fixtureFolderPath, fixtureStems.[0], firstImage))
+                        |> update' NextClicked
+                        |> update' (JpgLoaded(fixtureFolderPath, fixtureStems.[1], FakeImage()))
+
+                    match state.CurrentJpg with
+                    | Some image ->
+                        Expect.isFalse (obj.ReferenceEquals(image, firstImage)) "la nouvelle image remplace l'ancienne, sans cumul"
+                    | None -> failtest "l'image suivante doit être affichable"
+                }
+
+                test "JpgLoaded ignores a stale image that arrives after navigating" {
+                    // Parcours UI : l'utilisateur navigue pendant que le JPG de
+                    // la photo précédente se décode encore. Quand l'image lente
+                    // arrive, elle ne doit pas écraser la photo courante.
+                    let state =
+                        triaging' ()
+                        |> update' NextClicked // courant : P2
+                        |> update' (JpgLoaded(fixtureFolderPath, fixtureStems.[0], FakeImage())) // arrivée tardive de P1
+
+                    Expect.isNone state.CurrentJpg "l'image obsolète est ignorée, pas affichée"
+                }
+
+                test "JpgLoadFailed on the current photo reports the error in the status" {
+                    let state = triaging' () |> update' (JpgLoadFailed(fixtureFolderPath, fixtureStems.[0], "fichier verrouille"))
+
+                    Expect.equal state.Screen (Working Triaging) "l'écran ne change pas"
+                    Expect.stringContains state.Status ErrorStatusPrefix "préfixe d'erreur"
+                    Expect.stringContains state.Status (fixtureStems.[0] + ".JPG") "le fichier en échec est identifié"
+                    Expect.stringContains state.Status "fichier verrouille" "la raison est visible"
+                }
+
+                test "JpgLoadFailed on the current photo clears the previous image" {
+                    // Audit itération 4 (Majeur 2) : l'échec de chargement ne
+                    // doit pas laisser la photo du tandem précédent affichée
+                    // sous le compteur du courant — une décision de suppression
+                    // ne se prend jamais sur une image qui ment.
+                    let state =
+                        triaging' ()
+                        |> update' (JpgLoaded(fixtureFolderPath, fixtureStems.[0], FakeImage()))
+                        |> update' NextClicked
+                        |> update' (JpgLoadFailed(fixtureFolderPath, fixtureStems.[1], "fichier verrouille"))
+
+                    Expect.isNone state.CurrentJpg "aucune image ne reste affichée pour un tandem non chargé"
+                    Expect.stringContains state.Status "fichier verrouille" "l'échec reste signalé dans le bandeau bas"
+                }
+
+                test "JpgLoadFailed for a stale photo does not overwrite the status" {
+                    // Un échec de chargement obsolète (photo déjà quittée)
+                    // n'a pas le droit d'écraser un bandeau bas valide.
+                    let withStatus = { triaging' () with Status = SuccessStatusPrefix + "Tandem supprimé." }
+
+                    let state =
+                        withStatus
+                        |> update' NextClicked
+                        |> update' (JpgLoadFailed(fixtureFolderPath, fixtureStems.[0], "fichier verrouille"))
+
+                    Expect.equal state.Status (SuccessStatusPrefix + "Tandem supprimé.") "le statut n'est pas écrasé"
+                }
+
+                test "FolderScanned clears the current image" {
+                    let state =
+                        triaging' ()
+                        |> update' (JpgLoaded(fixtureFolderPath, fixtureStems.[0], FakeImage()))
+                        |> update' (FolderScanned fixtureScan)
+
+                    Expect.isNone state.CurrentJpg "le nouveau dossier ne garde pas l'ancienne image en mémoire"
+                }
+
+                test "FolderScanFailed clears the current image" {
+                    let state =
+                        triaging' ()
+                        |> update' (JpgLoaded(fixtureFolderPath, fixtureStems.[0], FakeImage()))
+                        |> update' (FolderScanFailed "acces refuse")
+
+                    Expect.isNone state.CurrentJpg "aucune image ne survit à un changement de dossier"
+                } ]
+
+          testList
+              "stale folder results"
+              [ // Parcours UI : les résultats d'arrière-plan (décodage, suppression)
+                // identifient leur tandem par stem seul. Si l'utilisateur change
+                // de dossier pendant l'opération et que le nouveau dossier a les
+                // mêmes stems (même appareil), le résultat de l'ancien dossier ne
+                // doit toucher ni l'image ni le scan du nouveau. Le bandeau bas,
+                // lui, garde le droit de refléter le résultat (règle VISION).
+
+                let scanOfOtherFolder () =
+                    triaging' ()
+                    |> update' (FolderSelected otherFolderPath)
+                    |> update' (FolderScanned fixtureScan) // mêmes stems, dossier différent
+
+                test "JpgLoaded from the previous folder is ignored after another folder is scanned" {
+                    let state =
+                        scanOfOtherFolder ()
+                        |> update' (JpgLoaded(fixtureFolderPath, fixtureStems.[0], FakeImage())) // décodage lent de l'ancien dossier
+
+                    Expect.isNone state.CurrentJpg "la photo affichée appartient au dossier courant, pas au précédent"
+                }
+
+                test "JpgLoadFailed from the previous folder does not overwrite the new folder status" {
+                    let state =
+                        scanOfOtherFolder ()
+                        |> update' (JpgLoadFailed(fixtureFolderPath, fixtureStems.[0], "fichier verrouille"))
+
+                    Expect.stringContains state.Status "tandems à organiser" "le statut du dossier courant tient toujours"
+                    Expect.isFalse (state.Status.StartsWith ErrorStatusPrefix) "l'échec de l'ancien dossier n'enduit pas le nouveau"
+                }
+
+                test "DeleteTandemCompleted from the previous folder leaves the new folder scan alone" {
+                    let state =
+                        { triaging' () with FolderPath = Some fixtureFolderPath }
+                        |> update' DeleteTandemRequested
+                        |> update' DeleteTandemConfirmed // suppression de l'ancien dossier, tourne en arrière-plan
+                        |> update' (FolderSelected otherFolderPath)
+                        |> update' (FolderScanned fixtureScan) // le nouveau dossier a aussi un P1
+                        |> update' (DeleteTandemCompleted(fixtureFolderPath, fixtureStems.[0], deletionTrashed fixtureStems.[0]))
+
+                    Expect.equal state.Scan.TandemsToOrganize.Length fixtureStems.Length "le tandem du nouveau dossier n'est pas retiré : ses fichiers existent toujours"
+                    Expect.stringContains state.Status "corbeille" "le résultat réel de l'ancien dossier reste visible dans le bandeau bas"
                 } ] ]
 
 [<EntryPoint>]

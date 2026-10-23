@@ -21,7 +21,6 @@ let folderScanTests =
 
           test "scanFolder on an empty folder returns an empty scan" {
               let scan = scanFolder (tempFolder ())
-
               Expect.isEmpty scan.TandemsToOrganize "aucun tandem à organiser"
               Expect.isEmpty scan.OrganizedTandems "aucun tandem déjà organisé"
               Expect.isEmpty scan.CrossedTandems "aucun tandem croisé"
@@ -33,6 +32,25 @@ let folderScanTests =
               Expect.isEmpty scan.DuplicateJpgs "aucun doublon JPG"
               Expect.isEmpty scan.DuplicateRaws "aucun doublon RAW"
               Expect.isNone scan.RawFolderIssue "aucune anomalie"
+          }
+
+          test "scanFolder refuses to scan a folder that does not exist" {
+              // Audit itération 4 (Majeur 3) : le refus d'un dossier inexistant
+              // doit être explicite et lisible, pas l'effet de bord d'une
+              // énumération qui explose (« Could not find a part of the path »).
+              // Un front console doit pouvoir afficher une raison claire.
+              let missing = Path.Combine(tempFolder (), "dossier-absent")
+
+              let error =
+                  try
+                      scanFolder missing |> ignore
+                      None
+                  with ex ->
+                      Some ex.Message
+
+              match error with
+              | Some message -> Expect.stringContains message "Folder does not exist" "refus explicite, message clair"
+              | None -> failtest "jamais de scan silencieux d'un dossier absent"
           }
 
           test "scanFolder classifies a nominal tandem as to organize" {
@@ -312,4 +330,15 @@ let folderScanTests =
 
               Expect.isNone (findTriableTandem scan "P3") "tandem croisé : introuvable au tri"
               Expect.isNone (findTriableTandem scan "P999") "stem inconnu : introuvable"
+          }
+
+          // ---------- tandemJpgPath ----------
+
+          test "tandemJpgPath combines the folder with the JPG file name, whatever its case" {
+              // Le JPG d'un tandem triable est toujours à la racine ; le nom
+              // réel du fichier (casse d'origine comprise) sert au chemin.
+              let mixedCase = { Stem = "P1"; JpgFileName = "P1.jpg"; RawFileName = "P1.RW2" }
+
+              Expect.equal (tandemJpgPath "/dossier" (tandem "P1")) "/dossier/P1.JPG" "chemin complet du JPG à la racine"
+              Expect.equal (tandemJpgPath "/dossier" mixedCase) "/dossier/P1.jpg" "le nom de fichier d'origine est respecté"
           } ]

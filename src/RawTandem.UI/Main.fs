@@ -311,7 +311,7 @@ let private triagingView (state: State) (dispatch: Msg -> unit) =
 
     let viewerText =
         match currentStem with
-        | Some stem -> sprintf "[ Visionneuse JPG — %s.JPG ]" stem
+        | Some stem -> sprintf "Chargement de %s.JPG…" stem
         | None -> "Aucune photo dans ce dossier."
 
     let counter =
@@ -363,14 +363,34 @@ let private triagingView (state: State) (dispatch: Msg -> unit) =
             ]
             Border.create [
                 Border.margin (Thickness(20.0))
-                Border.borderBrush Brushes.Gray
-                Border.borderThickness (Thickness(1.0))
+                // Cadre noir : les couleurs du cliché ressortent sur un
+                // pourtour qui n'émet pas de lumière (effet salle obscure).
+                Border.background Brushes.Black
+                Border.padding (Thickness(14.0))
                 Border.child (
-                    TextBlock.create [
-                        TextBlock.text viewerText
-                        TextBlock.fontSize 18.0
-                        TextBlock.horizontalAlignment HorizontalAlignment.Center
-                        TextBlock.verticalAlignment VerticalAlignment.Center
+                    Border.create [
+                        // Séparateur fin et sombre : une photo aux bords noirs
+                        // ne doit pas fondre dans le cadre.
+                        Border.borderBrush (SolidColorBrush(Color.FromRgb(0x3Auy, 0x3Auy, 0x3Auy)))
+                        Border.borderThickness (Thickness(1.0))
+                        Border.child (
+                            match state.CurrentJpg with
+                            | Some image ->
+                                Image.create [
+                                    // Le JPG est déjà décodé à taille bornée
+                                    // dans update ; Uniform préserve le ratio.
+                                    Image.source image
+                                    Image.stretch Stretch.Uniform
+                                ] :> Types.IView
+                            | None ->
+                                TextBlock.create [
+                                    TextBlock.text viewerText
+                                    TextBlock.fontSize 18.0
+                                    TextBlock.foreground Brushes.DimGray
+                                    TextBlock.horizontalAlignment HorizontalAlignment.Center
+                                    TextBlock.verticalAlignment VerticalAlignment.Center
+                                ] :> Types.IView
+                        )
                     ]
                 )
             ]
