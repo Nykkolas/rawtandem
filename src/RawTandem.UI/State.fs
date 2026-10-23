@@ -156,10 +156,14 @@ let private scanCmd (folderPath: string) : Cmd<Msg> =
         FolderScanned
         (fun ex -> FolderScanFailed ex.Message)
 
-let private inOrganizing (state: State) =
+/// Un message d'arrière-plan ne referme jamais une question affichée : annuler
+/// une action en attente est le choix de l'utilisateur, pas celui d'un échec
+/// qui arrive en arrière-plan. Sans question affichée, l'échec ramène à l'écran
+/// d'organisation : c'est le seul endroit où l'on peut relancer.
+let private reportBackgroundFailure (state: State) (status: string) : State =
     match state.Screen with
-    | Working Organizing | Confirming(Organizing, _) -> true
-    | _ -> false
+    | Confirming _ -> { state with Status = status }
+    | Working _ -> { state with Screen = Working Organizing; Status = status }
 
 /// Statut de synthèse d'une exécution de plan réussie.
 let private completedStatus (outcome: MoveOutcome) =
@@ -209,6 +213,17 @@ let update (msg: Msg) (state: State) : State * Cmd<Msg> =
             | Some RawFolderIsFile ->
                 { state with
                     Status = sprintf "%s« %s » existe mais est un fichier : renommez-le pour pouvoir organiser." ErrorStatusPrefix RawSubfolderName },
+                Cmd.none
+            | Some(RawFolderCaseMismatch foundName) ->
+                // Filet de sécurité derrière le bouton grisé : organiser pendant
+                // l'anomalie créerait un second dossier « RAW/ » à côté de « raw »,
+                // dont le contenu deviendrait invisible au scan suivant.
+                { state with
+                    Status =
+                        sprintf
+                            "%sLe dossier « %s » est mal cassé : renommez-le avant d'organiser."
+                            ErrorStatusPrefix
+                            foundName },
                 Cmd.none
             | _ ->
                 if fixableCount state.Scan = 0 then
@@ -284,7 +299,10 @@ let update (msg: Msg) (state: State) : State * Cmd<Msg> =
 
     | OrganizeCompleted outcome ->
         if List.isEmpty outcome.Failed then
-            if inOrganizing state then
+            // Passage automatique au tri seulement depuis l'écran d'organisation :
+            // une question en attente n'est jamais refermée par un résultat
+            // d'arrière-plan, la réussite pas plus que l'échec.
+            if state.Screen = Working Organizing then
                 { state with
                     Screen = Working Triaging
                     Status = completedStatus outcome },
@@ -294,17 +312,16 @@ let update (msg: Msg) (state: State) : State * Cmd<Msg> =
         else
             let failedMove, failedReason = List.head outcome.Failed
 
-            { state with
-                Screen = Working Organizing
-                Status =
-                    sprintf
-                        "%s%d déplacements effectués, %d en échec (ex. %s : %s)."
-                        ErrorStatusPrefix
-                        outcome.Moved.Length
-                        outcome.Failed.Length
-                        (Path.GetFileName failedMove.SourcePath)
-                        failedReason },
-            Cmd.none
+            let status =
+                sprintf
+                    "%s%d déplacements effectués, %d en échec (ex. %s : %s)."
+                    ErrorStatusPrefix
+                    outcome.Moved.Length
+                    outcome.Failed.Length
+                    (Path.GetFileName failedMove.SourcePath)
+                    failedReason
+
+            reportBackgroundFailure state status, Cmd.none
 
     | OrganizeNothingToMove ->
         match state.Screen with
@@ -313,10 +330,7 @@ let update (msg: Msg) (state: State) : State * Cmd<Msg> =
         | Working _ | Confirming _ -> state, Cmd.none
 
     | OrganizeFailed error ->
-        { state with
-            Screen = Working Organizing
-            Status = sprintf "%sOrganisation impossible : %s" ErrorStatusPrefix error },
-        Cmd.none
+        reportBackgroundFailure state (sprintf "%sOrganisation impossible : %s" ErrorStatusPrefix error), Cmd.none
 
     | OrganizeCancelled ->
         match state.Screen with
@@ -389,10 +403,7 @@ let update (msg: Msg) (state: State) : State * Cmd<Msg> =
         | Working _ | Confirming _ -> state, Cmd.none
 
     | ResolveDuplicatesFailed error ->
-        { state with
-            Screen = Working Organizing
-            Status = sprintf "%sRésolution des doublons impossible : %s" ErrorStatusPrefix error },
-        Cmd.none
+        reportBackgroundFailure state (sprintf "%sRésolution des doublons impossible : %s" ErrorStatusPrefix error), Cmd.none
 
     | ResolveDuplicatesCancelled ->
         match state.Screen with
@@ -453,10 +464,7 @@ let update (msg: Msg) (state: State) : State * Cmd<Msg> =
             Cmd.none
 
     | NormalizeRawFolderFailed error ->
-        { state with
-            Screen = Working Organizing
-            Status = sprintf "%sRenommage impossible : %s" ErrorStatusPrefix error },
-        Cmd.none
+        reportBackgroundFailure state (sprintf "%sRenommage impossible : %s" ErrorStatusPrefix error), Cmd.none
 
     | NormalizeRawFolderCancelled ->
         match state.Screen with

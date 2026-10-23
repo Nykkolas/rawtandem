@@ -135,6 +135,41 @@ let stateTests =
                     Expect.stringContains state.Status "RAW" "l'anomalie bloque la planification"
                 }
 
+                test "OrganizeRequested with a wrong-cased raw folder refuses to plan" {
+                    // Parcours UI : l'utilisateur ouvre un dossier ./P1.JPG ./P1.RW2
+                    // ./raw/P9.RW2 (dossier « RAW » mal cassé). L'écran d'organisation
+                    // affiche la ligne orange « Dossier « raw » mal cassé : « RAW »
+                    // n'existe pas » et le bouton Organiser grisé. Ce test couvre le
+                    // filet de sécurité derrière la vue : si un clic (ou un futur
+                    // raccourci clavier) produit OrganizeRequested tant que l'anomalie
+                    // est là, la planification est refusée. Organiser maintenant
+                    // créerait un second dossier « RAW/ » à côté de « raw », et le
+                    // contenu de « raw » deviendrait invisible au scan suivant.
+                    // Le seul chemin vers l'organisation passe par le bouton
+                    // « Renommer « raw » en « RAW » ».
+                    let scan =
+                        { emptyScan with
+                            TandemsToOrganize = [ tandem "P1" ]
+                            RawFolderIssue = Some(RawFolderCaseMismatch "raw") }
+
+                    // L'utilisateur ouvre le dossier : l'écran d'organisation
+                    // affiche l'anomalie en orange.
+                    let organizingScreen =
+                        init' ()
+                        |> update' (FolderSelected fixtureFolderPath)
+                        |> update' (FolderScanned scan)
+
+                    Expect.equal organizingScreen.Screen (Working Organizing) "écran d'organisation"
+                    Expect.stringContains organizingScreen.Status "mal cass" "la ligne orange signale l'anomalie"
+
+                    // Malgré le bouton grisé, un message OrganizeRequested arrive :
+                    // refus explicite, aucune préparation de plan.
+                    let state = organizingScreen |> update' OrganizeRequested
+
+                    Expect.equal state.Screen (Working Organizing) "pas d'écran de confirmation"
+                    Expect.stringContains state.Status "renommez" "le statut demande de renommer avant d'organiser"
+                }
+
                 test "OrganizeRequested does nothing outside the Organizing screen" {
                     let state = init' () |> update' OrganizeRequested
                     Expect.equal state.Screen (Working Home) "aucun changement d'écran"
@@ -249,6 +284,76 @@ let stateTests =
                     Expect.stringContains state.Status "Confirmation inattendue" "l'incohérence est signalée"
                 }
 
+                test "OrganizeFailed keeps the pending confirmation on screen" {
+                    // Parcours UI : l'utilisateur confirme « Déplacer 3 fichiers
+                    // .RW2 », puis, pendant que l'organisation tourne en arrière-plan,
+                    // clique « Résoudre les 2 doublons » : la question s'affiche.
+                    // L'organisation échoue en arrière-plan (ex. dossier cible en
+                    // lecture seule) : la question ne doit pas disparaître, seul le
+                    // bandeau bas passe au rouge.
+                    let scan = { fixtureScan with DuplicateRaws = [ "P9.RW2" ]; DuplicateJpgs = [ "P8.JPG" ] }
+
+                    let state =
+                        init' ()
+                        |> update' (FolderSelected fixtureFolderPath)
+                        |> update' (FolderScanned scan)
+                        |> update' OrganizeRequested
+                        |> update' (OrganizePlanned planFixture) // « Déplacer » : organisation en arrière-plan
+                        |> update' OrganizeConfirmed
+                        |> update' ResolveDuplicatesRequested // il clique « Résoudre les 2 doublons » pendant ce temps
+                        |> update' (OrganizeFailed "acces refuse") // échec de l'organisation en arrière-plan
+
+                    Expect.equal state.Screen (Confirming(Organizing, ResolveDuplicates 2)) "la question posée reste affichée"
+                    Expect.stringContains state.Status "acces refuse" "l'erreur d'arrière-plan est visible dans le bandeau bas"
+                }
+
+                test "OrganizeCompleted with failures keeps the pending confirmation on screen" {
+                    // Parcours UI : « Déplacer 3 fichiers .RW2 » confirmé, l'organisation
+                    // tourne et échouera (cible en lecture seule). Pendant ce temps
+                    // l'utilisateur clique « Résoudre les 2 doublons » : la question
+                    // s'affiche. L'organisation se termine en échec : la question ne
+                    // doit pas disparaître, seul le bandeau bas passe au rouge.
+                    let scan = { fixtureScan with DuplicateRaws = [ "P9.RW2" ]; DuplicateJpgs = [ "P8.JPG" ] }
+
+                    let outcome = { Moved = []; Failed = [ (rawMoveFixture "P1", "acces refuse") ] }
+
+                    let state =
+                        init' ()
+                        |> update' (FolderSelected fixtureFolderPath)
+                        |> update' (FolderScanned scan)
+                        |> update' OrganizeRequested
+                        |> update' (OrganizePlanned planFixture)
+                        |> update' OrganizeConfirmed // organisation en arrière-plan
+                        |> update' ResolveDuplicatesRequested // il clique « Résoudre les 2 doublons »
+                        |> update' (OrganizeCompleted outcome) // se termine en échec
+
+                    Expect.equal state.Screen (Confirming(Organizing, ResolveDuplicates 2)) "la question posée reste affichée"
+                    Expect.stringContains state.Status "acces refuse" "l'échec d'arrière-plan est visible dans le bandeau bas"
+                }
+
+                test "OrganizeCompleted with success keeps the pending confirmation on screen" {
+                    // Parcours UI : « Déplacer 3 fichiers .RW2 » confirmé, l'organisation
+                    // tourne. Pendant ce temps l'utilisateur clique « Résoudre les
+                    // 2 doublons » : la question s'affiche. L'organisation réussit :
+                    // la question ne doit pas disparaître non plus — la réussite n'a
+                    // pas plus le droit d'annuler une action en attente. Le passage
+                    // automatique au tri ne se fait que depuis l'écran d'organisation.
+                    let scan = { fixtureScan with DuplicateRaws = [ "P9.RW2" ]; DuplicateJpgs = [ "P8.JPG" ] }
+
+                    let state =
+                        init' ()
+                        |> update' (FolderSelected fixtureFolderPath)
+                        |> update' (FolderScanned scan)
+                        |> update' OrganizeRequested
+                        |> update' (OrganizePlanned planFixture)
+                        |> update' OrganizeConfirmed // organisation en arrière-plan
+                        |> update' ResolveDuplicatesRequested // il clique « Résoudre les 2 doublons »
+                        |> update' (OrganizeCompleted outcomeAllMoved) // réussite
+
+                    Expect.equal state.Screen (Confirming(Organizing, ResolveDuplicates 2)) "la question posée reste affichée"
+                    Expect.stringContains state.Status SuccessStatusPrefix "la réussite reste visible dans le bandeau bas"
+                }
+
                 test "OrganizeCancelled returns to the Organizing screen" {
                     let state = confirming' () |> update' OrganizeCancelled
                     Expect.equal state.Screen (Working Organizing) "retour à l'organisation"
@@ -322,6 +427,35 @@ let stateTests =
 
                     Expect.equal state.Screen (Working Organizing) "retour à l'organisation"
                     Expect.stringContains state.Status "annul" "annulation signalée"
+                }
+
+                test "ResolveDuplicatesFailed keeps the pending confirmation on screen" {
+                    // Parcours UI : le dossier a 2 doublons et 3 tandems à organiser.
+                    // L'utilisateur clique « Résoudre les 2 doublons », confirme :
+                    // la résolution tourne en arrière-plan. Pendant ce temps il clique
+                    // « Organiser » : l'écran de confirmation « Déplacer 3 fichiers
+                    // .RW2 … ? » s'affiche. Il lit la question quand la résolution
+                    // échoue en arrière-plan (ex. fichier verrouillé). La question ne
+                    // doit pas disparaître : annuler une action en attente est le
+                    // choix de l'utilisateur, pas celui d'un message d'arrière-plan.
+                    // Seul le bandeau bas passe au rouge.
+                    let scan =
+                        { fixtureScan with
+                            DuplicateRaws = [ "P9.RW2" ]
+                            DuplicateJpgs = [ "P8.JPG" ] }
+
+                    let state =
+                        init' ()
+                        |> update' (FolderSelected fixtureFolderPath)
+                        |> update' (FolderScanned scan)
+                        |> update' ResolveDuplicatesRequested // « Résoudre les 2 doublons »
+                        |> update' ResolveDuplicatesConfirmed // « Résoudre » : tourne en arrière-plan
+                        |> update' OrganizeRequested // il clique « Organiser » pendant ce temps
+                        |> update' (OrganizePlanned planFixture) // écran « Déplacer 3 fichiers .RW2 ? »
+                        |> update' (ResolveDuplicatesFailed "fichier verrouille") // échec arrière-plan
+
+                    Expect.equal state.Screen (Confirming(Organizing, OrganizeFolder(3, 0))) "la question posée reste affichée"
+                    Expect.stringContains state.Status "verrouille" "l'erreur d'arrière-plan est visible dans le bandeau bas"
                 }
 
                 test "ResolveDuplicatesRequested counts case twins too" {
@@ -402,6 +536,32 @@ let stateTests =
 
                     Expect.equal state.Screen (Working Organizing) "retour à l'organisation"
                     Expect.stringContains state.Status "annul" "annulation signalée"
+                }
+
+                test "NormalizeRawFolderFailed keeps the pending confirmation on screen" {
+                    // Parcours UI : dossier « raw » mal cassé. L'utilisateur confirme
+                    // « Renommer », le renommage tourne en arrière-plan (échouera :
+                    // dossier en lecture seule). Pendant ce temps il passe au tri et
+                    // demande la suppression d'un tandem : la question « Supprimer… »
+                    // s'affiche. Le renommage échoue : la question reste, seul le
+                    // bandeau bas passe au rouge.
+                    let scan =
+                        { emptyScan with
+                            TandemsToOrganize = [ tandem "P1" ]
+                            RawFolderIssue = Some(RawFolderCaseMismatch "raw") }
+
+                    let state =
+                        init' ()
+                        |> update' (FolderSelected fixtureFolderPath)
+                        |> update' (FolderScanned scan)
+                        |> update' NormalizeRawFolderRequested // « Renommer « raw » en « RAW » »
+                        |> update' NormalizeRawFolderConfirmed // « Renommer » : tourne en arrière-plan
+                        |> update' StartTriagingClicked // il passe au tri pendant ce temps
+                        |> update' DeleteTandemRequested // « Supprimer le tandem P1 » : question affichée
+                        |> update' (NormalizeRawFolderFailed "acces refuse") // échec du renommage
+
+                    Expect.equal state.Screen (Confirming(Triaging, DeleteTandem "P1")) "la question posée reste affichée"
+                    Expect.stringContains state.Status "acces refuse" "l'erreur d'arrière-plan est visible dans le bandeau bas"
                 }
 
                 test "NormalizeRawFolderConfirmed without a matching pending action is reported" {

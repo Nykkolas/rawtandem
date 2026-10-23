@@ -164,6 +164,30 @@ let folderScanTests =
               Expect.equal scan.TandemsToOrganize [ tandem "P1230009" ] "le tandem racine reste à organiser"
           }
 
+          test "scanFolder reports a RAW present at both locations without JPG as a duplicate only" {
+              // Parcours UI : ./P9.RW2 à la racine et ./RAW/P9.RW2, mais aucun
+              // P9.JPG nulle part (le JPG a été supprimé alors qu'une copie du RAW
+              // traînait encore à la racine). Écran d'organisation : seule la ligne
+              // orange « doublons RAW (à la racine) : 1 : P9.RW2 » s'affiche,
+              // le bouton Organiser reste à 0 déplacement, aucune ligne rouge
+              // d'orphelin. Décision épinglée : le doublon est l'anomalie la plus
+              // spécifique, il gagne seul ; les deux RAW se révéleront « orphelins
+              // rangés » au scan suivant, après résolution. Ce test empêche une
+              // réorganisation du match de classifier ce stem autrement en silence.
+              let folder = tempFolder ()
+              let raw = rawSubfolder folder
+              touch folder "P9.RW2"
+              touch raw "P9.RW2"
+
+              let scan = scanFolder folder
+
+              Expect.equal scan.DuplicateRaws [ "P9.RW2" ] "le RAW racine est le doublon : ligne orange"
+              Expect.isEmpty scan.OrphanRawsToOrganize "pas de RAW orphelin à organiser : le doublon gagne seul"
+              Expect.isEmpty scan.FiledOrphanRaws "le RAW rangé n'est pas signalé orphelin non plus"
+              Expect.isEmpty scan.TandemsToOrganize "aucun tandem sans JPG"
+              Expect.isEmpty scan.OrganizedTandems "aucun tandem sans JPG"
+          }
+
           test "scanFolder ignores files that are neither JPG nor RW2 and other subfolders" {
               let folder = tempFolder ()
               touch folder "notes.txt"

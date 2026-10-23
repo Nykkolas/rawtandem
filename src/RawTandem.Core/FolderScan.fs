@@ -150,7 +150,17 @@ let private classifyStem
         | None, None, None, Some j -> [ OrphanJpgInRaw j ]
         | None, None, Some r, None -> [ OrphanRawToOrganize r ]
         | None, Some r, None, None -> [ FiledOrphanRaw r ]
-        | _ -> []
+        | None, Some _, Some _, None ->
+            // RAW aux deux emplacements sans aucun JPG : le fait DuplicateRaw
+            // émis plus haut gagne seul, sans fait d'orphelin supplémentaire
+            // (décision épinglée dans FolderScanTests : « ... as a duplicate only ») ;
+            // les deux copies se révéleront RAW orphelins rangés après résolution.
+            []
+        | None, None, None, None ->
+            // Inatteignable : un stem classifié existe dans au moins une des
+            // quatre listes. Le match reste sans joker pour qu'une combinaison
+            // oubliée soit une erreur de compilation, pas un silence.
+            []
 
     caseTwins @ duplicates @ pairing
 

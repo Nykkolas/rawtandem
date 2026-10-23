@@ -225,7 +225,7 @@ let private organizingView (state: State) (dispatch: Msg -> unit) =
           | Some RawFolderIsFile ->
               (sprintf "« %s » existe mais est un fichier : organisation impossible." RawSubfolderName, Brushes.DarkOrange)
           | Some (RawFolderCaseMismatch foundName) ->
-              (sprintf "Dossier « %s » mal cassé : « %s » n'existe pas." foundName RawSubfolderName, Brushes.DarkOrange)
+              (sprintf "Dossier « %s » mal cassé : « %s » n'existe pas. Renommez-le avant d'organiser." foundName RawSubfolderName, Brushes.DarkOrange)
           | None -> () ]
 
     let headerViews : Types.IView list =
@@ -249,7 +249,7 @@ let private organizingView (state: State) (dispatch: Msg -> unit) =
 
     let organizeDisabled =
         plannedCount = 0
-        || scan.RawFolderIssue = Some RawFolderIsFile
+        || scan.RawFolderIssue.IsSome
 
     let renameButton : Types.IView list =
         match scan.RawFolderIssue with
