@@ -29,6 +29,7 @@ Un trieur de photos qui considère chaque cliché comme **un couple JPG+RAW** :
 | Workflow | 3 phases : accueil → organisation (déplacement des RAW, avec confirmation) → tri |
 | Cible RAW | `.RW2` uniquement (autres formats en évolution, voir `docs/TODO.md`) |
 | Suppression | Corbeille OS, jamais de suppression définitive |
+| Suppression (implémentation) | Le Core calcule un plan (`Deletion.planDeletion` : chemins complets du JPG à la racine et du RAW selon son emplacement, donné par la requête du scan `FolderScan.findTriableTandem`), l'UI l'exécute via `gio trash` (freedesktop), fichier par fichier : l'échec d'un fichier n'interrompt pas l'autre, ni ne retire le tandem du scan ; suppression complète confirmée dans le bandeau bas, le tandem quitte le scan et l'index s'ajuste sur la liste visible |
 | Ouverture de dossier | Sélecteur de dossier natif Avalonia (`StorageProvider.OpenFolderPickerAsync`) ; aucun message si l'utilisateur annule |
 | Changement de dossier | « Ouvrir un autre dossier… » disponible sur tous les écrans où un dossier est actif (organisation, tri) ; une question affichée doit être tranchée d'abord (jamais refermée par la navigation) ; l'écran courant reste pendant l'analyse du nouveau dossier |
 | Scan du dossier | **Racine + sous-dossier `RAW/`** ; les autres sous-dossiers sont ignorés en silence |

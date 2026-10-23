@@ -8,6 +8,7 @@ open RawTandem.Core.Navigation
 open RawTandem.Core.Tandems
 open RawTandem.Core.FolderScan
 open RawTandem.Core.Organization
+open RawTandem.Core.Deletion
 
 // ========== Types ==========
 
@@ -65,6 +66,8 @@ type Msg =
     | NextClicked
     | DeleteTandemRequested
     | DeleteTandemConfirmed
+    | DeleteTandemCompleted of stem: string * outcome: DeletionOutcome
+    | DeleteTandemFailed of error: string
     | DeleteTandemCancelled
 
 // ========== Statuts ==========
@@ -512,7 +515,42 @@ let update (msg: Msg) (state: State) : State * Cmd<Msg> =
     | DeleteTandemConfirmed ->
         match state.Screen with
         | Confirming(Triaging, DeleteTandem stem) ->
-            // Stub : la suppression réelle (corbeille OS) n'est pas encore branchée.
+            // Retour immédiat au tri, plus d'écran de confirmation pendant
+            // l'exécution : aucune double confirmation possible (comme pour
+            // l'organisation).
+            match state.FolderPath with
+            | None ->
+                { state with
+                    Screen = Working Triaging
+                    Status = sprintf "%sAucun dossier analysé." ErrorStatusPrefix },
+                Cmd.none
+            | Some folder ->
+                match findTriableTandem state.Scan stem with
+                | None ->
+                    { state with
+                        Screen = Working Triaging
+                        Status = sprintf "Le tandem %s n'est plus dans le dossier." stem },
+                    Cmd.none
+                | Some(tandem, rawLocation) ->
+                    { state with
+                        Screen = Working Triaging
+                        Status = "Suppression en cours…" },
+                    Cmd.OfAsync.either
+                        (fun (tandem, location) -> async {
+                            // Le plan (chemins complets des deux fichiers) est
+                            // calculé dans la commande : les fichiers ont pu
+                            // changer depuis la demande.
+                            return applyDeletion (planDeletion folder location tandem)
+                        })
+                        (tandem, rawLocation)
+                        (fun outcome -> DeleteTandemCompleted(stem, outcome))
+                        (fun ex -> DeleteTandemFailed ex.Message)
+        | Confirming _ | Working _ -> reportUnexpectedConfirmation state
+
+    | DeleteTandemCompleted(stem, outcome) ->
+        // Un résultat d'arrière-plan ne referme jamais une question affichée :
+        // seul le bandeau bas reflète le résultat, l'écran ne change pas.
+        if List.isEmpty outcome.Failed then
             let toOrganize, _ = removeWhere (fun t -> t.Stem = stem) state.Scan.TandemsToOrganize state.CurrentIndex
             let organized, _ = removeWhere (fun t -> t.Stem = stem) state.Scan.OrganizedTandems state.CurrentIndex
 
@@ -524,10 +562,26 @@ let update (msg: Msg) (state: State) : State * Cmd<Msg> =
             { state with
                 Scan = { state.Scan with TandemsToOrganize = toOrganize; OrganizedTandems = organized }
                 CurrentIndex = bounded visibleCount state.CurrentIndex
-                Screen = Working Triaging
-                Status = sprintf "Action serait : supprimer %s.JPG et %s.RW2 (vers la corbeille)." stem stem },
+                Status = sprintf "%sTandem %s supprimé : %s.JPG et %s.RW2 envoyés à la corbeille." SuccessStatusPrefix stem stem stem },
             Cmd.none
-        | Confirming _ | Working _ -> reportUnexpectedConfirmation state
+        else
+            // Échec (même partiel) : le tandem reste dans le scan — il est
+            // toujours visible au tri — et chaque échec est signalé.
+            let failedPath, failedReason = List.head outcome.Failed
+
+            { state with
+                Status =
+                    sprintf
+                        "%s%d fichier(s) envoyé(s) à la corbeille, %d en échec (ex. %s : %s)."
+                        ErrorStatusPrefix
+                        outcome.Trashed.Length
+                        outcome.Failed.Length
+                        (Path.GetFileName failedPath)
+                        failedReason },
+            Cmd.none
+
+    | DeleteTandemFailed error ->
+        { state with Status = sprintf "%sSuppression impossible : %s" ErrorStatusPrefix error }, Cmd.none
 
     | DeleteTandemCancelled ->
         match state.Screen with

@@ -13,8 +13,8 @@ Cases à cocher en Markdown : `[ ]` → `[x]` (cliquable aussi dans l'UI web Git
 - [ ] Valider dans l'UI graphique en conditions réelles l'ouverture de dossier et le déplacement des RAW (sélecteur natif branché, non vérifiable en headless)
 - [x] **Bug confirmé (itération 3)** : jumeaux de casse dans un même répertoire (`P1.JPG` + `P1.jpg`, ou `P1.RW2` + `P1.rw2` — possibles sur Linux) : le scan n'en voyait qu'un seul et avalait l'autre en silence. Corrigé : catégorie `CaseCollisions` (gagnant = premier nom en ordre ordinal, jumeau signalé en orange), résolution par renommage système « nom (1).ext » via le même flux que les doublons
 - [ ] Confirmation : donner à l'utilisateur un moyen de **visualiser les changements** avant de confirmer (liste des fichiers déplacés avec avant/après, aperçu par catégorie, etc.) — pour le moment la confirmation ne montre que des comptes
-- [ ] Suppression d'un tandem JPG+RAW vers la corbeille OS (`gio trash` sous Linux)
-- [ ] UI minimale : ~~choisir un dossier~~ (fait) ; visualiser un JPG ; supprimer le tandem
+- [x] Suppression d'un tandem JPG+RAW vers la corbeille OS (`gio trash` sous Linux) — fait : plan `Deletion.planDeletion` (chemins complets JPG+RAW selon l'emplacement du RAW), exécution `applyDeletion` fichier par fichier (un échec n'interrompt pas l'autre), branchée dans le tri derrière l'écran de confirmation existant
+- [ ] UI minimale : ~~choisir un dossier~~ (fait) ; visualiser un JPG ; ~~supprimer le tandem~~ (fait)
 - [ ] Déplacement des tandems : décision à prendre (destinations nommées / sélection à la volée / destination fixe), puis implémentation
 - [x] Vue de tri : bouton pour ouvrir un autre dossier sans repasser par l'accueil — fait : « Ouvrir un autre dossier… » en organisation (en-tête) et en tri (barre du haut), désactivé pendant qu'une question est affichée ; Ctrl+O attendra la subscription Elmish qui remplacera le hack clavier
 - [ ] Retouche externe : ouvrir une application de retouche d'un clic — sur le dossier (photo courante du tri) ou sur une photo en particulier ; application à choisir/configurer (par défaut, celle que l'OS associe au type de fichier)
@@ -25,7 +25,7 @@ Cases à cocher en Markdown : `[ ]` → `[x]` (cliquable aussi dans l'UI web Git
 ## Évolutions
 
 - [ ] Support d'autres formats RAW : CR2, CR3 (Canon), NEF (Nikon), ARW (Sony), DNG, RAF (Fuji), ORF (Olympus) — cible actuelle : RW2 (Panasonic Lumix TZ200) uniquement
-- [ ] Corbeille OS multi-plateforme (Windows recycle bin, macOS Trash)
+- [ ] Corbeille OS multi-plateforme, dans cet ordre : 1. Windows (recycle bin via `Microsoft.VisualBasic.FileIO` `RecycleOption.SendToRecycleBin` ou P/Invoke `SHFileOperation`), 2. macOS (Trash via `NSWorkspace.recycleURLs` ou `osascript`) — point d'extension unique : `trashFile` dans `Deletion.fs`, dispatch `RuntimeInformation.IsOSPlatform` ou package `TrashToolkit` (Meziantou) ; l'échec actuel sur plateforme sans `gio` est propre (fichier signalé, jamais de suppression définitive)
 - [ ] Orientation EXIF des JPG à l'affichage (portraits stockés horizontaux)
 - [ ] Grille de vignettes paresseuse / performance sur dossiers de plusieurs milliers de photos
 - [ ] Gestion des orphelins (JPG sans RAW, RAW sans JPG) : pour l'instant les orphelins sont signalés en rouge (nom seul) dans le résumé d'organisation et pris en compte par l'arbre de décision ; aller plus loin : action au fichier seul, affichage dédié dans le tri

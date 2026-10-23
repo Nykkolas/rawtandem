@@ -4,6 +4,7 @@ open Expecto
 open RawTandem.Core.Navigation
 open RawTandem.Core.FolderScanTests
 open RawTandem.Core.OrganizationTests
+open RawTandem.Core.DeletionTests
 
 [<Tests>]
 let navigationTests =
@@ -64,4 +65,4 @@ let main args =
     runTestsWithCLIArgs
         []
         args
-        (testList "All" [ folderScanTests; organizationTests; navigationTests ])
+        (testList "All" [ folderScanTests; organizationTests; deletionTests; navigationTests ])

@@ -4,6 +4,7 @@ open Expecto
 open RawTandem.Core.Tandems
 open RawTandem.Core.FolderScan
 open RawTandem.Core.Organization
+open RawTandem.Core.Deletion
 open RawTandem.UI.State
 
 let update' (msg: Msg) (state: State) : State =
@@ -51,6 +52,13 @@ let triaging' () : State =
     organizing' () |> update' StartTriagingClicked
 
 let private outcomeAllMoved = { Moved = planFixture.Moves; Failed = [] }
+
+/// Suppression complète du tandem : les deux fichiers partis à la corbeille.
+let private deletionTrashed (stem: string) =
+    { Trashed =
+        [ sprintf "%s/%s.JPG" fixtureFolderPath stem
+          sprintf "%s/%s.RW2" fixtureFolderPath stem ]
+      Failed = [] }
 
 [<Tests>]
 let stateTests =
@@ -634,30 +642,70 @@ let stateTests =
                     Expect.stringContains state.Status "Aucune photo" "message explicite"
                 }
 
-                test "DeleteTandemConfirmed removes the photo and mentions both files" {
+                test "DeleteTandemConfirmed switches back to Triaging while the deletion runs" {
+                    // Parcours UI : l'utilisateur confirme « Supprimer le tandem
+                    // P1.JPG + P1.RW2 ? ». La suppression (corbeille OS) tourne en
+                    // arrière-plan : retour immédiat au tri, plus d'écran de
+                    // confirmation — aucune double confirmation possible.
                     let state =
                         triaging' ()
                         |> update' DeleteTandemRequested
                         |> update' DeleteTandemConfirmed
 
+                    Expect.equal state.Screen (Working Triaging) "retour au tri pendant l'exécution"
+                    Expect.stringContains state.Status "en cours" "suppression annoncée"
+                }
+
+                test "DeleteTandemConfirmed without a folder reports instead of crashing" {
+                    let state =
+                        { (triaging' () |> update' DeleteTandemRequested) with
+                            FolderPath = None }
+                        |> update' DeleteTandemConfirmed
+
+                    Expect.equal state.Screen (Working Triaging) "retour au tri sans exécution"
+                    Expect.stringContains state.Status "Aucun dossier" "l'état incohérent est signalé, pas de crash"
+                }
+
+                test "DeleteTandemConfirmed on a tandem that left the scan reports it" {
+                    // Le dossier a changé entre la demande et la confirmation :
+                    // le tandem n'est plus dans le scan, rien n'est exécuté.
+                    let stale =
+                        { (triaging' () |> update' DeleteTandemRequested) with
+                            Scan = emptyScan }
+
+                    let state = stale |> update' DeleteTandemConfirmed
+
+                    Expect.equal state.Screen (Working Triaging) "retour au tri sans exécution"
+                    Expect.stringContains state.Status "n'est plus dans le dossier" "le tandem disparu est signalé"
+                }
+
+                test "DeleteTandemCompleted removes the photo and mentions both files" {
+                    let state =
+                        triaging' ()
+                        |> update' DeleteTandemRequested
+                        |> update' DeleteTandemConfirmed
+                        |> update' (DeleteTandemCompleted(fixtureStems.[0], deletionTrashed fixtureStems.[0]))
+
                     Expect.equal state.Scan.TandemsToOrganize.Length (fixtureStems.Length - 1) "une photo de moins"
-                    Expect.equal state.Screen (Working Triaging) "retour au tri"
+                    Expect.equal state.Screen (Working Triaging) "l'écran de tri reste"
+                    Expect.stringContains state.Status SuccessStatusPrefix "préfixe de succès"
                     Expect.stringContains state.Status (fixtureStems.[0] + ".JPG") "JPG mentionné"
                     Expect.stringContains state.Status (fixtureStems.[0] + ".RW2") "RAW mentionné"
                     Expect.stringContains state.Status "corbeille" "suppression via la corbeille"
                 }
 
-                test "DeleteTandemConfirmed adjusts the index when removing the last photo" {
+                test "DeleteTandemCompleted adjusts the index when removing the last photo" {
                     let last = fixtureStems.Length - 1
                     let state =
                         { triaging' () with CurrentIndex = last }
                         |> update' DeleteTandemRequested
                         |> update' DeleteTandemConfirmed
+                        |> update' (DeleteTandemCompleted(fixtureStems.[last], deletionTrashed fixtureStems.[last]))
 
                     Expect.equal state.CurrentIndex (last - 1) "index ramené au nouveau dernier"
                 }
 
-                test "DeleteTandemConfirmed on an organized tandem keeps the index on the visible list" {
+                test "DeleteTandemCompleted on an organized tandem keeps the index on the visible list" {
                     // 1 tandem à organiser + 3 organisés : le courant est le dernier
                     // visible (un organisé). L'index doit reculer au nouveau dernier.
                     let scan =
@@ -671,12 +719,66 @@ let stateTests =
                         |> update' (FolderScanned scan)
                         |> update' StartTriagingClicked
                         |> (fun s -> { s with CurrentIndex = 3 })
+                        |> update' DeleteTandemRequested
+                        |> update' DeleteTandemConfirmed
+                        |> update' (DeleteTandemCompleted("P4", deletionTrashed "P4"))
 
-                    let confirmed = state |> update' DeleteTandemRequested |> update' DeleteTandemConfirmed
+                    Expect.equal state.Screen (Working Triaging) "retour au tri"
+                    Expect.equal state.CurrentIndex 2 "l'index recule au nouveau dernier, pas plus tôt"
+                    Expect.equal state.Scan.OrganizedTandems.Length 2 "le tandem organisé est retiré"
+                }
 
-                    Expect.equal confirmed.Screen (Working Triaging) "retour au tri"
-                    Expect.equal confirmed.CurrentIndex 2 "l'index recule au nouveau dernier, pas plus tôt"
-                    Expect.equal confirmed.Scan.OrganizedTandems.Length 2 "le tandem organisé est retiré"
+                test "DeleteTandemCompleted with a partial failure keeps the tandem and reports it" {
+                    // Le JPG part à la corbeille mais le RAW échoue (ex. verrouillé) :
+                    // le tandem reste dans le scan — il est toujours visible au tri —
+                    // et l'échec identifie le fichier.
+                    let outcome =
+                        { Trashed = [ sprintf "%s/%s.JPG" fixtureFolderPath "P1" ]
+                          Failed = [ (sprintf "%s/%s.RW2" fixtureFolderPath "P1", "fichier verrouille") ] }
+
+                    let state =
+                        triaging' ()
+                        |> update' DeleteTandemRequested
+                        |> update' DeleteTandemConfirmed
+                        |> update' (DeleteTandemCompleted("P1", outcome))
+
+                    Expect.equal state.Scan.TandemsToOrganize.Length fixtureStems.Length "le tandem reste dans le scan"
+                    Expect.equal state.Screen (Working Triaging) "l'écran de tri reste"
+                    Expect.stringContains state.Status ErrorStatusPrefix "préfixe d'erreur"
+                    Expect.stringContains state.Status "P1.RW2" "l'échec identifie le fichier"
+                    Expect.stringContains state.Status "fichier verrouille" "la raison est visible"
+                }
+
+                test "DeleteTandemFailed reports the error and keeps the triage screen" {
+                    let state =
+                        triaging' ()
+                        |> update' DeleteTandemRequested
+                        |> update' DeleteTandemConfirmed
+                        |> update' (DeleteTandemFailed "corbeille indisponible")
+
+                    Expect.equal state.Scan.TandemsToOrganize.Length fixtureStems.Length "rien n'est supprimé"
+                    Expect.equal state.Screen (Working Triaging) "l'écran de tri reste"
+                    Expect.stringContains state.Status "corbeille indisponible" "erreur visible"
+                }
+
+                test "DeleteTandemCompleted keeps a pending confirmation on screen" {
+                    // Parcours UI : la suppression de P1 tourne en arrière-plan.
+                    // Pendant ce temps l'utilisateur navigue vers P2 et demande sa
+                    // suppression : la question « Supprimer P2 ? » s'affiche. La
+                    // suppression de P1 réussit : la question ne doit pas disparaître
+                    // — la réussite n'a pas plus le droit d'annuler une action en
+                    // attente qu'un échec. Seul le bandeau bas confirme P1.
+                    let state =
+                        triaging' ()
+                        |> update' DeleteTandemRequested // « Supprimer P1 ? »
+                        |> update' DeleteTandemConfirmed // suppression de P1 en arrière-plan
+                        |> update' NextClicked // il navigue vers P2
+                        |> update' DeleteTandemRequested // « Supprimer P2 ? » : question affichée
+                        |> update' (DeleteTandemCompleted(fixtureStems.[0], deletionTrashed fixtureStems.[0]))
+
+                    Expect.equal state.Screen (Confirming(Triaging, DeleteTandem "P2")) "la question posée reste affichée"
+                    Expect.stringContains state.Status SuccessStatusPrefix "la réussite de P1 est visible dans le bandeau bas"
+                    Expect.equal state.Scan.TandemsToOrganize.Length (fixtureStems.Length - 1) "P1 est bien retiré du scan"
                 }
 
                 test "DeleteTandemConfirmed without a matching pending action is reported, not swallowed" {

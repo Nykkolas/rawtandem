@@ -53,6 +53,24 @@ let emptyScan =
       CaseCollisions = []
       RawFolderIssue = None }
 
+/// Emplacement du RAW d'un tandem triable : racine (tandem à organiser)
+/// ou sous-dossier RAW/ (tandem déjà organisé). Le JPG d'un tandem triable
+/// est toujours à la racine du dossier.
+type RawLocation =
+    | AtRoot
+    | InRawSubfolder
+
+/// Trouve un tandem triable (à organiser ou déjà organisé) par son stem,
+/// avec l'emplacement de son RAW : c'est le scan qui sait où sont les
+/// fichiers, pas le tandem seul.
+let findTriableTandem (scan: FolderScan) (stem: string) : (Tandem * RawLocation) option =
+    match scan.TandemsToOrganize |> List.tryFind (fun t -> t.Stem = stem) with
+    | Some tandem -> Some(tandem, AtRoot)
+    | None ->
+        scan.OrganizedTandems
+        |> List.tryFind (fun t -> t.Stem = stem)
+        |> Option.map (fun tandem -> tandem, InRawSubfolder)
+
 let private stemOf (fileName: string) = Path.GetFileNameWithoutExtension fileName
 
 let private hasExtension (expected: string) (fileName: string) =

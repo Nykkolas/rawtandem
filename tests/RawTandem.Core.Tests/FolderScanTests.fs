@@ -283,4 +283,33 @@ let folderScanTests =
                   (scan.TandemsToOrganize |> List.map (fun t -> t.Stem))
                   [ "P1230001"; "P1230002"; "P1230003" ]
                   "tri stable par stem"
+          }
+
+          // ---------- findTriableTandem ----------
+
+          test "findTriableTandem finds a tandem to organize with its RAW at the root" {
+              let scan = { emptyScan with TandemsToOrganize = [ tandem "P1" ] }
+
+              let found = findTriableTandem scan "P1"
+
+              Expect.equal found (Some(tandem "P1", AtRoot)) "un tandem à organiser a son RAW à la racine"
+          }
+
+          test "findTriableTandem finds an organized tandem with its RAW in the subfolder" {
+              let scan = { emptyScan with OrganizedTandems = [ tandem "P2" ] }
+
+              let found = findTriableTandem scan "P2"
+
+              Expect.equal found (Some(tandem "P2", InRawSubfolder)) "un tandem organisé a son RAW dans RAW/"
+          }
+
+          test "findTriableTandem ignores stems that are not triable" {
+              // Un tandem croisé n'est pas triable (son JPG est dans RAW/),
+              // pas plus qu'un stem absent du dossier.
+              let scan =
+                  { emptyScan with
+                      CrossedTandems = [ { Stem = "P3"; JpgFileName = "P3.JPG"; RawFileName = "P3.RW2" } ] }
+
+              Expect.isNone (findTriableTandem scan "P3") "tandem croisé : introuvable au tri"
+              Expect.isNone (findTriableTandem scan "P999") "stem inconnu : introuvable"
           } ]

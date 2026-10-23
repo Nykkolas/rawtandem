@@ -23,6 +23,11 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      # gio (corbeille OS freedesktop) : les tests de suppression l'appellent
+      # réellement ; libglib2.0-bin fournit la commande.
+      - name: Install gio for OS trash tests
+        run: sudo apt-get update && sudo apt-get install -y libglib2.0-bin
+
       - name: Run tests with code coverage
         run: >-
           dotnet test

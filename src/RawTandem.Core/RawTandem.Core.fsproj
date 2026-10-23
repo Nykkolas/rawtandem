@@ -10,6 +10,7 @@
     <Compile Include="FolderScan.fs" />
     <Compile Include="Organization.fs" />
     <Compile Include="Navigation.fs" />
+    <Compile Include="Deletion.fs" />
   </ItemGroup>
 
 </Project>
