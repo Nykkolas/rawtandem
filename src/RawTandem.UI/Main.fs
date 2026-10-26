@@ -1,9 +1,11 @@
 module Main
 
+open System
 open Elmish
 open Avalonia
 open Avalonia.Controls
 open Avalonia.Input
+open Avalonia.Interactivity
 open Avalonia.Layout
 open Avalonia.Media
 open Avalonia.Platform.Storage
@@ -15,15 +17,6 @@ open Avalonia.FuncUI.Elmish
 open RawTandem.Core.Constants
 open RawTandem.Core.FolderScan
 open RawTandem.UI.State
-
-// ========== Dispatch (branchement temporaire des raccourcis clavier) ==========
-// Maquette : la vue capture le dispatch pour que la fenêtre puisse traduire
-// les touches en messages. Les messages de navigation et de suppression ne
-// s'appliquent qu'à l'écran de tri : la garde est dans `update`, donc tout
-// producteur de messages (clavier, bouton, autre front-end) est couvert.
-// À remplacer par une subscription Elmish.
-
-let mutable private currentDispatch : Msg -> unit = ignore
 
 // ========== Folder picker ==========
 
@@ -419,8 +412,6 @@ let private triagingView (state: State) (dispatch: Msg -> unit) =
 // ========== View ==========
 
 let view (state: State) (dispatch: Msg -> unit) =
-    currentDispatch <- dispatch
-
     // L'écran de confirmation se superpose à l'écran de travail d'origine :
     // on affiche la phase sous-jacente plus la bannière si nécessaire.
     let phase, (confirmation: Types.IView list) =
@@ -438,6 +429,45 @@ let view (state: State) (dispatch: Msg -> unit) =
         DockPanel.children ([ statusView state :> Types.IView ] @ confirmation @ [ content ])
     ]
 
+// ========== Clavier (subscription Elmish, règle RC-01) ==========
+
+/// Mapping touche → message de geste (RC-01, docs/usecases/regles-communes.md).
+/// La vue traduit les touches, la garde d'écran vit dans `update` : tout
+/// producteur de messages (clavier, bouton, autre front-end) est couvert.
+/// Les touches non mappées (Tab, Entrée, Espace…) restent aux contrôles.
+let private keyToMsg (key: Key) : Msg option =
+    match key with
+    | Key.Left -> Some PreviousClicked
+    | Key.Right -> Some NextClicked
+    | Key.Home -> Some FirstPhotoRequested
+    | Key.End -> Some LastPhotoRequested
+    | Key.Delete -> Some DeleteTandemRequested
+    | _ -> None
+
+/// Subscription clavier. Le gestionnaire est posé en **tunnel** sur la
+/// fenêtre pour voir les touches AVANT la navigation de focus d'Avalonia :
+/// en bubble, le KeyboardNavigationHandler du TopLevel captait la première
+/// flèche (focus donné au premier contrôle focalisable, événement marqué
+/// géré) et le raccourci ne jouait qu'à partir de la deuxième pression
+/// (bug confirmé 2026-10-26).
+let private keyboardSubscriptions (window: Window) (_state: State) =
+    [
+        ([ "keyboard-shortcuts" ],
+         fun (dispatch: Msg -> unit) ->
+             let handler =
+                 EventHandler<KeyEventArgs>(fun _ args ->
+                     match keyToMsg args.Key with
+                     | Some msg ->
+                         args.Handled <- true
+                         dispatch msg
+                     | None -> ())
+
+             window.AddHandler(InputElement.KeyDownEvent, handler, RoutingStrategies.Tunnel)
+
+             { new IDisposable with
+                 member _.Dispose() = window.RemoveHandler(InputElement.KeyDownEvent, handler) })
+    ]
+
 // ========== Window ==========
 
 type MainWindow() as this =
@@ -449,19 +479,7 @@ type MainWindow() as this =
         base.Height <- 640.0
         base.WindowStartupLocation <- WindowStartupLocation.CenterScreen
 
-        this.KeyDown.Add(fun args ->
-            match args.Key with
-            | Key.Left ->
-                args.Handled <- true
-                currentDispatch PreviousClicked
-            | Key.Right ->
-                args.Handled <- true
-                currentDispatch NextClicked
-            | Key.Delete ->
-                args.Handled <- true
-                currentDispatch DeleteTandemRequested
-            | _ -> ())
-
         Program.mkProgram init update view
+        |> Program.withSubscription (keyboardSubscriptions this)
         |> Program.withHost this
         |> Program.runWithAvaloniaSyncDispatch ()
