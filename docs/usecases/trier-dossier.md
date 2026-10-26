@@ -11,7 +11,7 @@ minimal guarantee: aucun fichier n'est effacé, tout est récupérable
 
 
 # Scénario primaire
-1. Ouvrir le répertoire "Pellicule" (un dossier avec la sortie brute de l'appareil photo = JPG + RW2 côte à côté)
+1. Ouvrir le répertoire "Pellicule" (un dossier avec la sortie brute de l'appareil photo = JPG + RW2 côte à côte)
 2. l'application propose d'organiser les fichiers, c'est à dire de déplacer tous les RW2 vers un dossier RAW
 3. l'utilisateur demande l'organisation
 4. l'application demande confirmation en listant clairement le nombre de fichiers qui seront déplacés
