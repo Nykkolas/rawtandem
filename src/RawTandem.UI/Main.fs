@@ -70,6 +70,7 @@ let private statusView (state: State) =
 
     Border.create [
         Border.dock Dock.Bottom
+        Border.verticalAlignment VerticalAlignment.Bottom
         Border.background Brushes.Gainsboro
         Border.padding (Thickness(12.0, 6.0))
         Border.child (
@@ -127,6 +128,7 @@ let private confirmationView (action: PendingAction) (dispatch: Msg -> unit) =
 
     Border.create [
         Border.dock Dock.Top
+        Border.verticalAlignment VerticalAlignment.Top
         Border.background Brushes.Khaki
         Border.padding (Thickness(12.0, 10.0))
         Border.child (
@@ -157,6 +159,65 @@ let private confirmationView (action: PendingAction) (dispatch: Msg -> unit) =
     ]
 
 // ========== Views per phase ==========
+
+/// Icône « plein écran » classique (RC-01) : quatre coins en L composés de
+/// Border — pas de glyphe typographique (le rendu ne dépend pas d'une police)
+/// ni de Shape (les attributs de formes de FuncUI ne sont pas consommables en
+/// F# avec cette version, vérifié sur l'exemple canonique Ellipse+fill).
+let private fullscreenIcon : Types.IView =
+    let corner (thickness: Thickness) (hAlign: HorizontalAlignment) (vAlign: VerticalAlignment) : Types.IView =
+        Border.create [
+            Border.width 5.0
+            Border.height 5.0
+            Border.borderBrush Brushes.Black
+            Border.borderThickness thickness
+            Border.horizontalAlignment hAlign
+            Border.verticalAlignment vAlign
+        ] :> Types.IView
+
+    Grid.create [
+        Grid.width 14.0
+        Grid.height 14.0
+        Grid.children [
+            corner (Thickness(1.0, 1.0, 0.0, 0.0)) HorizontalAlignment.Left VerticalAlignment.Top
+            corner (Thickness(0.0, 1.0, 1.0, 0.0)) HorizontalAlignment.Right VerticalAlignment.Top
+            corner (Thickness(1.0, 0.0, 0.0, 1.0)) HorizontalAlignment.Left VerticalAlignment.Bottom
+            corner (Thickness(0.0, 0.0, 1.0, 1.0)) HorizontalAlignment.Right VerticalAlignment.Bottom
+        ]
+    ] :> Types.IView
+
+/// Photo en plein écran (RC-01) : fond noir, l'image occupe la fenêtre.
+/// Le bandeau jaune et la barre de statut s'y superposent dans la
+/// composition de la vue, pas ici.
+let private fullscreenPhotoView (state: State) (dispatch: Msg -> unit) : Types.IView =
+    let viewerText =
+        match currentJpgFileName state with
+        | Some fileName -> sprintf "Chargement de %s…" fileName
+        | None -> "Aucune photo dans ce dossier."
+
+    Border.create [
+        Border.background Brushes.Black
+        // RC-01 : le double-clic bascule dans les deux sens — même geste que
+        // F/F11 (FullscreenRequested), le mapping est dans la vue, la garde
+        // dans update (aucun effet pendant une confirmation présentée).
+        Border.onDoubleTapped (fun _ -> dispatch FullscreenRequested)
+        Border.child (
+            match state.CurrentJpg with
+            | Some image ->
+                Image.create [
+                    Image.source image
+                    Image.stretch Stretch.Uniform
+                ] :> Types.IView
+            | None ->
+                TextBlock.create [
+                    TextBlock.text viewerText
+                    TextBlock.fontSize 18.0
+                    TextBlock.foreground Brushes.DimGray
+                    TextBlock.horizontalAlignment HorizontalAlignment.Center
+                    TextBlock.verticalAlignment VerticalAlignment.Center
+                ] :> Types.IView
+        )
+    ]
 
 let private homeView (dispatch: Msg -> unit) =
     StackPanel.create [
@@ -313,13 +374,26 @@ let private triagingView (state: State) (dispatch: Msg -> unit) =
 
     DockPanel.create [
         DockPanel.children [
-            Button.create [
-                Button.dock Dock.Top
-                Button.horizontalAlignment HorizontalAlignment.Left
-                Button.margin (Thickness(20.0, 12.0, 0.0, 0.0))
-                Button.isEnabled (canOpenAnotherFolder state)
-                Button.onClick (fun args -> pickFolder args.Source dispatch |> Async.StartImmediate)
-                Button.content "Ouvrir un autre dossier…"
+            // Barre du haut : « Ouvrir un autre dossier… » à gauche, bascule
+            // plein écran à droite (RC-01 : même geste que F/F11/double-clic).
+            DockPanel.create [
+                DockPanel.dock Dock.Top
+                DockPanel.children [
+                    Button.create [
+                        Button.dock Dock.Left
+                        Button.margin (Thickness(20.0, 12.0, 0.0, 0.0))
+                        Button.isEnabled (canOpenAnotherFolder state)
+                        Button.onClick (fun args -> pickFolder args.Source dispatch |> Async.StartImmediate)
+                        Button.content "Ouvrir un autre dossier…"
+                    ]
+                    Button.create [
+                        Button.dock Dock.Right
+                        Button.margin (Thickness(0.0, 12.0, 20.0, 0.0))
+                        Button.padding (Thickness(10.0))
+                        Button.onClick (fun _ -> dispatch FullscreenRequested)
+                        Button.content fullscreenIcon
+                    ]
+                ]
             ]
             // Légende attachée à la photo (principe de proximité) : le nom du
             // fichier à gauche, la progression à droite — l'œil ne quitte pas
@@ -379,6 +453,9 @@ let private triagingView (state: State) (dispatch: Msg -> unit) =
                 // pourtour qui n'émet pas de lumière (effet salle obscure).
                 Border.background Brushes.Black
                 Border.padding (Thickness(14.0))
+                // RC-01 : le double-clic sur la photo est le même geste que
+                // F ou F11 — le mapping est dans la vue, la garde dans update.
+                Border.onDoubleTapped (fun _ -> dispatch FullscreenRequested)
                 Border.child (
                     Border.create [
                         // Séparateur fin et sombre : une photo aux bords noirs
@@ -419,15 +496,32 @@ let view (state: State) (dispatch: Msg -> unit) =
         | Working phase -> phase, []
         | Confirming(phase, action) -> phase, [ confirmationView action dispatch ]
 
-    let content : Types.IView =
-        match phase with
-        | Home -> homeView dispatch
-        | Organizing -> organizingView state dispatch
-        | Triaging -> triagingView state dispatch
+    let root : Types.IView =
+        match state.DisplayMode with
+        | Normal ->
+            let content : Types.IView =
+                match phase with
+                | Home -> homeView dispatch
+                | Organizing -> organizingView state dispatch
+                | Triaging -> triagingView state dispatch
 
-    DockPanel.create [
-        DockPanel.children ([ statusView state :> Types.IView ] @ confirmation @ [ content ])
-    ]
+            DockPanel.create [
+                DockPanel.children ([ statusView state :> Types.IView ] @ confirmation @ [ content ])
+            ]
+        | Fullscreen ->
+            // RC-01 : en plein écran, seule la photo occupe l'écran (fond
+            // noir) ; le bandeau jaune et la barre de statut s'affichent
+            // par-dessus quand ils ont quelque chose à dire. Dans un Grid,
+            // le dernier enfant est rendu au-dessus des précédents : photo,
+            // puis bandeau, puis statut.
+            let children =
+                [ fullscreenPhotoView state dispatch :> Types.IView ]
+                @ confirmation
+                @ (if state.Status = "" then [] else [ statusView state ])
+
+            Grid.create [ Grid.children children ]
+
+    root
 
 // ========== Clavier (subscription Elmish, règle RC-01) ==========
 
@@ -442,6 +536,9 @@ let private keyToMsg (key: Key) : Msg option =
     | Key.Home -> Some FirstPhotoRequested
     | Key.End -> Some LastPhotoRequested
     | Key.Delete -> Some DeleteTandemRequested
+    | Key.F
+    | Key.F11 -> Some FullscreenRequested
+    | Key.Escape -> Some FullscreenExitRequested
     | _ -> None
 
 /// Subscription clavier. Le gestionnaire est posé en **tunnel** sur la
@@ -468,6 +565,30 @@ let private keyboardSubscriptions (window: Window) (_state: State) =
                  member _.Dispose() = window.RemoveHandler(InputElement.KeyDownEvent, handler) })
     ]
 
+/// RC-01 : le plein écran couvre l'écran, pas seulement la fenêtre — la
+/// fenêtre passe en WindowState.FullScreen (sans bordure ni barre de titre).
+/// Subscription pilotée par l'état : la clé contient le mode d'affichage,
+/// Elmish ré-évalue les subscriptions à chaque changement d'état et ne
+/// redémarre que celles dont la clé change — chaque bascule relance la
+/// subscription qui remet la fenêtre dans l'état correspondant.
+let private windowStateSubscriptions (window: Window) (state: State) =
+    let modeKey =
+        match state.DisplayMode with
+        | Normal -> "normal"
+        | Fullscreen -> "fullscreen"
+
+    [
+        ([ "window-state"; modeKey ],
+         fun (_dispatch: Msg -> unit) ->
+             window.WindowState <-
+                 (match state.DisplayMode with
+                  | Fullscreen -> WindowState.FullScreen
+                  | Normal -> WindowState.Normal)
+
+             { new IDisposable with
+                 member _.Dispose() = () })
+    ]
+
 // ========== Window ==========
 
 type MainWindow() as this =
@@ -480,6 +601,6 @@ type MainWindow() as this =
         base.WindowStartupLocation <- WindowStartupLocation.CenterScreen
 
         Program.mkProgram init update view
-        |> Program.withSubscription (keyboardSubscriptions this)
+        |> Program.withSubscription (fun state -> keyboardSubscriptions this state @ windowStateSubscriptions this state)
         |> Program.withHost this
         |> Program.runWithAvaloniaSyncDispatch ()

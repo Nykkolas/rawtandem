@@ -33,12 +33,20 @@ type Screen =
     | Working of phase: Phase
     | Confirming of phase: Phase * action: PendingAction
 
+/// Mode d'affichage de la vue de tri (règle RC-01) : le plein écran est un
+/// mode d'exposition, pas un écran — il est orthogonal à `Screen`.
+type DisplayMode =
+    | Normal
+    | Fullscreen
+
 type State =
     { Screen: Screen
       FolderPath: string option
       /// Résultat du scan du dossier, classé selon l'arbre de décision.
       Scan: FolderScan
       CurrentIndex: int
+      /// Mode d'affichage de la vue de tri (RC-01) : plein écran ou non.
+      DisplayMode: DisplayMode
       /// JPG du tandem courant, décodé à taille d'affichage (jamais le RAW).
       CurrentJpg: IImage option
       Status: string }
@@ -72,6 +80,9 @@ type Msg =
     | NextClicked
     | FirstPhotoRequested
     | LastPhotoRequested
+    | FullscreenRequested
+    | FullscreenExitRequested
+    | StatusHidden
     | DeleteTandemRequested
     | DeleteTandemConfirmed
     | DeleteTandemCompleted of folderPath: string * stem: string * outcome: DeletionOutcome
@@ -176,6 +187,7 @@ let init () : State * Cmd<Msg> =
       FolderPath = None
       Scan = emptyScan
       CurrentIndex = 0
+      DisplayMode = Normal
       CurrentJpg = None
       Status = "" },
     Cmd.none
@@ -273,7 +285,7 @@ let private completedStatus (outcome: MoveOutcome) =
     if List.isEmpty parts then sprintf "%sRien à déplacer." SuccessStatusPrefix
     else sprintf "%s%s." SuccessStatusPrefix (String.concat ", " parts)
 
-let update (msg: Msg) (state: State) : State * Cmd<Msg> =
+let private updateCore (msg: Msg) (state: State) : State * Cmd<Msg> =
     match msg with
     | FolderSelected path ->
         { state with
@@ -650,6 +662,37 @@ let update (msg: Msg) (state: State) : State * Cmd<Msg> =
             nextState, loadCurrentJpgCmd nextState
         | Working _ | Confirming _ -> state, Cmd.none
 
+    // RC-01 (docs/usecases/regles-communes.md) : F/F11/double-clic basculent
+    // le plein écran, Echap le quitte — jamais pendant qu'une confirmation est
+    // présentée (l'écran Confirming prime : la question doit être tranchée
+    // d'abord). Le mode d'affichage est orthogonal à l'écran : les autres
+    // gestes de tri restent valables en plein écran.
+    | FullscreenRequested ->
+        match state.Screen with
+        | Working Triaging ->
+            let nextMode =
+                match state.DisplayMode with
+                | Normal -> Fullscreen
+                | Fullscreen -> Normal
+
+            { state with DisplayMode = nextMode }, Cmd.none
+        | Working _ | Confirming _ -> state, Cmd.none
+
+    | FullscreenExitRequested ->
+        match state.Screen with
+        | Working Triaging when state.DisplayMode = Fullscreen ->
+            { state with DisplayMode = Normal }, Cmd.none
+        | Working _ | Confirming _ -> state, Cmd.none
+
+    // RC-01 : en plein écran, la barre de statut n'apparaît que brièvement
+    // (~3 s, minuteur posé par la vue) puis se cache « le reste du temps ».
+    // En vue normale, le statut est persistant (RC-02) : un StatusHidden
+    // tardif — après sortie du plein écran — ne doit rien effacer.
+    | StatusHidden ->
+        match state.DisplayMode with
+        | Fullscreen -> { state with Status = "" }, Cmd.none
+        | Normal -> state, Cmd.none
+
     | DeleteTandemRequested ->
         match state.Screen with
         | Working Triaging ->
@@ -780,3 +823,40 @@ let update (msg: Msg) (state: State) : State * Cmd<Msg> =
                 Status = "Suppression du tandem annulée." },
             Cmd.none
         | Working _ | Confirming _ -> state, Cmd.none
+
+/// RC-01 (docs/usecases/regles-communes.md) : en plein écran, la barre de
+/// statut n'apparaît que brièvement puis se cache « le reste du temps ».
+/// La machine programme l'effacement : dès qu'un statut apparaît (ou qu'on
+/// entre en plein écran avec un statut affiché), une commande temporisée
+/// dispatch StatusHidden. Délai de 3 s : convention toast (2–4 s), le temps
+/// de lire une ligne (~3 mots/s, NN/g) sans qu'elle gêne la photo. La garde
+/// de StatusHidden ignore un effacement arrivé après retour en vue normale,
+/// où le statut est persistant (RC-02). Limite assumée : une commande Elmish
+/// ne s'annule pas — deux statuts rapprochés en plein écran peuvent voir
+/// le premier effacer le second un peu plus tôt.
+[<Literal>]
+let StatusFullscreenDisplayMs = 3000
+
+let private autoHideStatusCmd : Cmd<Msg> =
+    Cmd.OfAsync.perform (fun () -> Async.Sleep StatusFullscreenDisplayMs) () (fun () -> StatusHidden)
+
+/// Update enveloppant updateCore : la logique des messages vit dans
+/// updateCore, l'éphémérisation du statut en plein écran est l'unique
+/// préoccupation de l'enveloppe — un seul endroit, tous les messages couverts.
+let update (msg: Msg) (state: State) : State * Cmd<Msg> =
+    let nextState, cmd = updateCore msg state
+
+    let enteredFullscreenWithStatus =
+        nextState.DisplayMode = Fullscreen
+        && state.DisplayMode = Normal
+        && nextState.Status <> ""
+
+    let statusAppearedInFullscreen =
+        nextState.DisplayMode = Fullscreen
+        && nextState.Status <> ""
+        && nextState.Status <> state.Status
+
+    if enteredFullscreenWithStatus || statusAppearedInFullscreen then
+        nextState, Cmd.batch [ cmd; autoHideStatusCmd ]
+    else
+        nextState, cmd

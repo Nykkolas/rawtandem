@@ -848,6 +848,86 @@ let stateTests =
                 } ]
 
           testList
+              "fullscreen (RC-01)"
+              [ test "FullscreenRequested enters fullscreen on the Triaging screen" {
+                    let state = triaging' () |> update' FullscreenRequested
+                    Expect.equal state.DisplayMode Fullscreen "mode plein écran"
+                }
+
+                test "FullscreenRequested toggles back to the normal display" {
+                    let state = { triaging' () with DisplayMode = Fullscreen } |> update' FullscreenRequested
+                    Expect.equal state.DisplayMode Normal "retour à l'affichage normal"
+                }
+
+                test "FullscreenExitRequested leaves fullscreen" {
+                    let state = { triaging' () with DisplayMode = Fullscreen } |> update' FullscreenExitRequested
+                    Expect.equal state.DisplayMode Normal "affichage normal"
+                }
+
+                test "FullscreenExitRequested does nothing in the normal display" {
+                    let expected = triaging' ()
+                    Expect.equal (expected |> update' FullscreenExitRequested) expected "déjà en affichage normal"
+                }
+
+                test "fullscreen messages do nothing outside the Triaging screen" {
+                    let expected = organizing' ()
+                    Expect.equal (expected |> update' FullscreenRequested) expected "pas de plein écran hors du tri"
+                    Expect.equal (expected |> update' FullscreenExitRequested) expected "rien à quitter hors du tri"
+                }
+
+                test "Echap does not leave fullscreen while a confirmation is pending" {
+                    // RC-01 : une confirmation présentée prime sur la sortie du
+                    // plein écran — F comme Echap n'ont aucun effet tant que la
+                    // question n'est pas tranchée.
+                    let state =
+                        { triaging' () with DisplayMode = Fullscreen }
+                        |> update' DeleteTandemRequested
+
+                    Expect.equal state.Screen (Confirming(Triaging, DeleteTandem "P1")) "la confirmation est présentée"
+                    let after = state |> update' FullscreenExitRequested
+                    Expect.equal after.DisplayMode Fullscreen "on reste en plein écran"
+                    Expect.equal after.Screen state.Screen "la confirmation reste présentée"
+                    Expect.equal (state |> update' FullscreenRequested) state "F non plus ne bascule pendant la confirmation"
+                }
+
+                test "StatusHidden clears the status in fullscreen" {
+                    // RC-01 : en plein écran, un statut s'affiche brièvement
+                    // puis disparaît — la barre reste cachée le reste du temps.
+                    let state = { { triaging' () with DisplayMode = Fullscreen } with Status = "✓ message" }
+                    Expect.equal (state |> update' StatusHidden).Status "" "le statut est effacé en plein écran"
+                }
+
+                test "StatusHidden does nothing in the normal display" {
+                    // En vue normale, le statut est persistant (règle RC-02) :
+                    // le minuteur est annulé à la sortie du plein écran, et un
+                    // StatusHidden tardif ne doit rien effacer.
+                    let state = { triaging' () with Status = "✓ message" }
+                    Expect.equal (state |> update' StatusHidden).Status "✓ message" "le statut persiste en vue normale"
+                }
+
+                test "a status appearing in fullscreen schedules the auto-hide command" {
+                    // Vue de tri sans photo : DeleteTandemRequested pose un
+                    // statut explicite ; la machine doit planifier l'effacement.
+                    let empty = { triaging' () with Scan = emptyScan; CurrentIndex = 0; DisplayMode = Fullscreen }
+                    let _, cmd = update DeleteTandemRequested empty
+                    Expect.isNonEmpty (List.ofSeq cmd) "la commande d'effacement temporisé est planifiée"
+                }
+
+                test "a status appearing in the normal display schedules nothing" {
+                    let empty = { triaging' () with Scan = emptyScan; CurrentIndex = 0 }
+                    let _, cmd = update DeleteTandemRequested empty
+                    Expect.isEmpty (List.ofSeq cmd) "en vue normale le statut persiste, rien à planifier"
+                }
+
+                test "entering fullscreen with a status also schedules the auto-hide" {
+                    // Un statut déjà affiché avant la bascule devient éphémère
+                    // dès l'entrée en plein écran (« cachée le reste du temps »).
+                    let state = { { triaging' () with Scan = emptyScan; CurrentIndex = 0 } with Status = "✓ message" }
+                    let _, cmd = update FullscreenRequested state
+                    Expect.isNonEmpty (List.ofSeq cmd) "le statut déjà présent devient éphémère en entrant en plein écran"
+                } ]
+
+          testList
               "view model"
               [ // Fonctions pures State -> sémantique de présentation (TODO
                 // « modèle de vue ») : la vue ne garde que le mapping
