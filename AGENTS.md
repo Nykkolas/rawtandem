@@ -43,6 +43,7 @@ Ces fichiers sont des symlinks vers `~/Source/agents-shared/` :
 - **Avalonia.FuncUI** : lire `docs/AVALONIA.md` avant de toucher l'UI (DSL, types géométriques, contrôles, feedback, clipboard, fenêtre).
 - **Audit générique** : `docs/AUDIT-GENERIC.md`, complété par la checklist locale `docs/AUDIT.md`.
 - **Spec = UC** : `docs/SPEC-UC.md`, workflow de spécification par use cases (la boucle complète y vit).
+- **Couverture de code** : `docs/COVERAGE-GENERIC.md` (mesure systématique quand tout est vert, écart rapporté depuis la mesure précédente).
 - **Erreurs transverses** : `docs/ERREURS-GENERIC.md`, leçons génériques à ne pas reproduire ; y promouvoir les leçons locales génériques (procédure dans DECISIONS.md d'agents-shared).
 
 ## 🛡️ Opérations fichiers (sécurité des données)
@@ -87,6 +88,10 @@ Ces fichiers sont des symlinks vers `~/Source/agents-shared/` :
 ### TDD
 - Approche par défaut pour les corrections et nouvelles fonctionnalités : écrire d'abord le test qui échoue, le voir échouer, puis corriger le code, puis revérifier (rouge/vert).
 - Chaque bug corrigé doit avoir son test de non-régression.
+
+### Couverture de code (systématique)
+- **Règle générique : lire `docs/COVERAGE-GENERIC.md`** — quand toute la suite de tests est verte à la fin d'un changement, mesurer la couverture et rapporter les chiffres par assemblage **avec l'écart depuis la mesure précédente** ; l'historique vit dans `docs/COVERAGE.md` (une ligne par mesure, la dernière ligne est la référence).
+- Spécifique au projet : `dotnet test tests/RawTandem.Core.Tests --collect:"XPlat Code Coverage"` puis idem pour `tests/RawTandem.UI.Tests` (nettoyer d'abord les `TestResults/` pour ne fusionner que les runs du jour), rapports fusionnés via ReportGenerator dans `coveragereport/` (types `TextSummary;Html`), lecture dans `coveragereport/Summary.txt`. Plafond connu : App/Main/Program (wiring Avalonia) à 0 % en headless.
 
 ### DRY
 - Éviter la répétition de code. Extraire les conditions répétées en fonctions helpers.

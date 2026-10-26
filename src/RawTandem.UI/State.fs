@@ -173,20 +173,24 @@ let init () : State * Cmd<Msg> =
 let private reportUnexpectedConfirmation (state: State) : State * Cmd<Msg> =
     { state with Status = UnexpectedConfirmationStatus }, Cmd.none
 
-/// Statut de synthèse après un scan : organisation à faire ou déjà faite.
-let private scanStatus (scan: FolderScan) =
+/// Vrai quand le scan ne montre rien à remettre en ordre : aucun tandem à
+/// organiser et aucune anomalie (croisés, inversés, orphelins rangés,
+/// doublons, jumeaux de casse, dossier RAW mal cassé). Un dossier dans cet
+/// état n'a rien à proposer à l'écran d'organisation.
+let private hasNothingToFix (scan: FolderScan) =
     let duplicates = scan.DuplicateJpgs.Length + scan.DuplicateRaws.Length
 
-    let nothingToDo =
-        List.isEmpty scan.TandemsToOrganize
-        && List.isEmpty scan.CrossedTandems
-        && List.isEmpty scan.InvertedTandems
-        && List.isEmpty scan.OrphanRawsToOrganize
-        && List.isEmpty scan.OrphanJpgsInRaw
-        && duplicates = 0
-        && List.isEmpty scan.CaseCollisions
-        && scan.RawFolderIssue.IsNone
+    List.isEmpty scan.TandemsToOrganize
+    && List.isEmpty scan.CrossedTandems
+    && List.isEmpty scan.InvertedTandems
+    && List.isEmpty scan.OrphanRawsToOrganize
+    && List.isEmpty scan.OrphanJpgsInRaw
+    && duplicates = 0
+    && List.isEmpty scan.CaseCollisions
+    && scan.RawFolderIssue.IsNone
 
+/// Statut de synthèse après un scan : organisation à faire ou déjà faite.
+let private scanStatus (scan: FolderScan) =
     let anomalyNote =
         match scan.RawFolderIssue with
         | Some RawFolderIsFile ->
@@ -196,7 +200,7 @@ let private scanStatus (scan: FolderScan) =
         | None -> None
 
     let baseStatus =
-        if nothingToDo then
+        if hasNothingToFix scan then
             sprintf
                 "%sDossier déjà organisé : %d tandems, rien à remettre en ordre."
                 SuccessStatusPrefix
@@ -268,13 +272,22 @@ let update (msg: Msg) (state: State) : State * Cmd<Msg> =
     | FolderScanned scan ->
         state.CurrentJpg |> Option.iter disposeImage
 
-        { state with
-            Screen = Working Organizing
-            Scan = scan
-            CurrentIndex = 0
-            CurrentJpg = None
-            Status = scanStatus scan },
-        Cmd.none
+        let scanned =
+            { state with
+                Scan = scan
+                CurrentIndex = 0
+                CurrentJpg = None
+                Status = scanStatus scan }
+
+        // Dossier déjà organisé sans rien à remettre en ordre : l'écran
+        // d'organisation n'a rien à proposer, le tri est affiché directement
+        // (UC trier-dossier-deja-organise). Toute anomalie restante garde
+        // l'écran d'organisation, seul endroit où elle est signalée.
+        if hasNothingToFix scan then
+            let nextState = { scanned with Screen = Working Triaging }
+            nextState, loadCurrentJpgCmd nextState
+        else
+            { scanned with Screen = Working Organizing }, Cmd.none
 
     | FolderScanFailed error ->
         state.CurrentJpg |> Option.iter disposeImage

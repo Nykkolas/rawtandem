@@ -116,6 +116,32 @@ let stateTests =
                     Expect.stringContains state.Status "déjà organisé" "message dédié"
                 }
 
+                test "FolderScanned enters the Triaging screen directly when the folder has nothing to fix" {
+                    // UC trier-dossier-deja-organise : un dossier déjà organisé,
+                    // sans aucune anomalie, n'a rien à proposer à l'écran
+                    // d'organisation — le tri est affiché directement.
+                    let scan = { emptyScan with OrganizedTandems = [ tandem "P1" ] }
+                    let state = init' () |> update' (FolderSelected fixtureFolderPath) |> update' (FolderScanned scan)
+
+                    Expect.equal state.Screen (Working Triaging) "l'écran d'organisation est sauté : tri direct"
+                    Expect.equal state.CurrentIndex 0 "index initial"
+                    Expect.stringContains state.Status "déjà organisé" "le bandeau garde le bilan du scan"
+                }
+
+                test "FolderScanned still offers the Organizing screen when an anomaly remains" {
+                    // Une anomalie corrigeable (JPG orphelin rangé dans RAW/)
+                    // garde l'écran d'organisation, seul endroit où la
+                    // résoudre — même si tous les couples sont organisés.
+                    let scan =
+                        { emptyScan with
+                            OrganizedTandems = [ tandem "P1" ]
+                            OrphanJpgsInRaw = [ "PX.JPG" ] }
+
+                    let state = init' () |> update' (FolderSelected fixtureFolderPath) |> update' (FolderScanned scan)
+
+                    Expect.equal state.Screen (Working Organizing) "une anomalie garde l'écran d'organisation"
+                }
+
                 test "FolderScanned reports a RAW folder anomaly" {
                     let scan = { emptyScan with RawFolderIssue = Some RawFolderIsFile }
                     let state = init' () |> update' (FolderSelected fixtureFolderPath) |> update' (FolderScanned scan)
@@ -208,11 +234,13 @@ let stateTests =
                 }
 
                 test "OrganizeRequested with nothing to fix reports immediately" {
+                    // État hors d'atteinte par l'UI depuis le tri direct (le
+                    // scan « rien à faire » mène au tri), mais le garde reste :
+                    // un rafraîchissement d'arrière-plan peut rendre le scan
+                    // vide pendant que l'écran d'organisation est affiché.
                     let scan = { emptyScan with OrganizedTandems = [ tandem "P1" ] }
                     let state =
-                        init' ()
-                        |> update' (FolderSelected fixtureFolderPath)
-                        |> update' (FolderScanned scan)
+                        { organizing' () with Scan = scan }
                         |> update' OrganizeRequested
 
                     Expect.equal state.Screen (Working Organizing) "pas d'écran de confirmation"

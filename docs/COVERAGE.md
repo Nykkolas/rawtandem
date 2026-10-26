@@ -1,0 +1,16 @@
+# COVERAGE - Historique des mesures de couverture
+
+Chaque mesure est prise quand toute la suite de tests est verte à la fin d'un
+changement (règle dans `AGENTS.md` « Couverture de code »), puis ajoutée ici :
+la dernière ligne sert de référence pour signaler l'écart à la mesure suivante.
+
+Méthode : `dotnet test --collect:"XPlat Code Coverage"` sur chaque projet de
+tests (après nettoyage des `TestResults/`), rapports fusionnés par ReportGenerator
+dans `coveragereport/`. Les pourcentages sont en lignes ; `State.fs` est la
+logique Elmish couverte par les tests headless — App/Main/Program (wiring
+Avalonia) restent à 0 %, c'est un plafond connu, pas une dette.
+
+| Date | Total | Branches | Core | UI | State.fs | Écart / note |
+|---|---|---|---|---|---|---|
+| 2026-10-23 | 53,7 % | 66,6 % | 98,7 % | 41,5 % | 85,9 % | Mesure initiale (avant le workflow « la spec est le UC ») |
+| 2026-10-26 | 61,7 % | 77,1 % | 99,4 % | 51,4 % | 97,3 % | UC trier-dossier-deja-organise (tri direct, `hasNothingToFix`) + correctif scan périmé : State +11,4 pts, Core +0,7 |
