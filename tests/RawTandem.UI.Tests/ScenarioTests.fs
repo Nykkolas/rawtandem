@@ -72,7 +72,7 @@ let private withPellicule (run: string -> unit) =
     finally
         Directory.Delete(folder, true)
 
-/// Scénario exécutable de docs/usecases/trier-dossier.md.
+/// Scénario exécutable de docs/usecases/organiser-et-trier-dossier.md.
 ///
 /// Le test ne joue que les gestes de l'utilisateur (les étapes « utilisateur »
 /// du scénario primaire) ; les étapes « application » transitent par les vraies
@@ -81,7 +81,7 @@ let private withPellicule (run: string -> unit) =
 let scenarioTests =
     testList "ScenarioTests" [
 
-        test "UC trier-dossier : organize a fresh dump then delete one unwanted tandem" {
+        test "UC organiser-et-trier-dossier : organize a fresh dump then delete one unwanted tandem" {
             withPellicule (fun pellicule ->
                 let stems = [ "P1"; "P2"; "P3" ]
 

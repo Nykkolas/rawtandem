@@ -396,7 +396,7 @@ let update (msg: Msg) (state: State) : State * Cmd<Msg> =
     | OrganizeCompleted outcome ->
         // Les fichiers ont bougé : le scan en mémoire est périmé (les RAW
         // déplacés y sont encore notés à la racine — bug du scan périmé,
-        // 2026-10-24, attrapé par le scénario trier-dossier). Le dossier est
+        // 2026-10-24, attrapé par le scénario organiser-et-trier-dossier). Le dossier est
         // rafraîchi en arrière-plan, sans écran ni statut.
         let refresh =
             match state.FolderPath with

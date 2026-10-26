@@ -20,7 +20,7 @@
 - Le workflow CI exécute les tests puis publie les binaires en GitHub Release (à mettre en place ; voir `docs/TODO.md`).
 - Après le push du tag, vérifier le run et la Release obtenue, et rapporter le résultat.
 
-### Workflow "la spec est le UC" (adopté le 2026-10-26, éprouvé sur trier-dossier)
+### Workflow "la spec est le UC" (adopté le 2026-10-26, éprouvé sur organiser-et-trier-dossier)
 - La boucle complète (UC → questionnement forme/fond sans plume → test E2E relu → « go » →
   implémentation TDD → vérification utilisateur → commit) vit dans `docs/SPEC-UC.md`
   (agents-shared) : la lire avant de démarrer une fonctionnalité ou une correction.
