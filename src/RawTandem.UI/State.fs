@@ -47,6 +47,8 @@ type Msg =
     | FolderSelected of path: string
     | FolderScanned of scan: FolderScan
     | FolderScanFailed of error: string
+    | FolderRescanned of folderPath: string * scan: FolderScan
+    | FolderRescanFailed of error: string
     | OrganizeRequested
     | OrganizePlanned of plan: OrganizationPlan
     | OrganizePlanningFailed of error: string
@@ -218,6 +220,17 @@ let private scanCmd (folderPath: string) : Cmd<Msg> =
         FolderScanned
         (fun ex -> FolderScanFailed ex.Message)
 
+/// Commande de rafraîchissement du scan après une opération de l'application
+/// (des fichiers ont bougé) : contrairement à scanCmd, le résultat ne change
+/// pas d'écran — le dossier courant continue d'être affiché, le scan seul est
+/// remplacé.
+let private rescanCmd (folderPath: string) : Cmd<Msg> =
+    Cmd.OfAsync.either
+        (fun path -> async { return scanFolder path })
+        folderPath
+        (fun scan -> FolderRescanned(folderPath, scan))
+        (fun ex -> FolderRescanFailed ex.Message)
+
 /// Un message d'arrière-plan ne referme jamais une question affichée : annuler
 /// une action en attente est le choix de l'utilisateur, pas celui d'un échec
 /// qui arrive en arrière-plan. Sans question affichée, l'échec ramène à l'écran
@@ -270,6 +283,21 @@ let update (msg: Msg) (state: State) : State * Cmd<Msg> =
             Screen = Working Home
             CurrentJpg = None
             Status = sprintf "%sAnalyse du dossier impossible : %s" ErrorStatusPrefix error },
+        Cmd.none
+
+    | FolderRescanned(folder, scan) ->
+        // Rien ne bouge que le scan : un rafraîchissement d'arrière-plan ne
+        // referme jamais une question affichée et n'écrase pas le bilan
+        // visible (règles VISION, audit itération 4). Seul le dossier courant
+        // est rafraîchi : un résultat d'un autre dossier n'est pas le nôtre.
+        if state.FolderPath = Some folder then
+            { state with Scan = scan }, Cmd.none
+        else
+            state, Cmd.none
+
+    | FolderRescanFailed error ->
+        { state with
+            Status = sprintf "%sRafraîchissement du dossier impossible : %s" ErrorStatusPrefix error },
         Cmd.none
 
     // ---------- Organisation ----------
@@ -366,15 +394,24 @@ let update (msg: Msg) (state: State) : State * Cmd<Msg> =
         | Confirming _ | Working _ -> reportUnexpectedConfirmation state
 
     | OrganizeCompleted outcome ->
+        // Les fichiers ont bougé : le scan en mémoire est périmé (les RAW
+        // déplacés y sont encore notés à la racine — bug du scan périmé,
+        // 2026-10-24, attrapé par le scénario trier-dossier). Le dossier est
+        // rafraîchi en arrière-plan, sans écran ni statut.
+        let refresh =
+            match state.FolderPath with
+            | Some folder -> rescanCmd folder
+            | None -> Cmd.none
+
         if List.isEmpty outcome.Failed then
             // Passage automatique au tri seulement depuis l'écran d'organisation :
             // une question en attente n'est jamais refermée par un résultat
             // d'arrière-plan, la réussite pas plus que l'échec.
             if state.Screen = Working Organizing then
                 let nextState = { state with Screen = Working Triaging; Status = completedStatus outcome }
-                nextState, loadCurrentJpgCmd nextState
+                nextState, loadCurrentJpgCmd nextState @ refresh
             else
-                { state with Status = completedStatus outcome }, Cmd.none
+                { state with Status = completedStatus outcome }, refresh
         else
             let failedMove, failedReason = List.head outcome.Failed
 
@@ -387,7 +424,7 @@ let update (msg: Msg) (state: State) : State * Cmd<Msg> =
                     (Path.GetFileName failedMove.SourcePath)
                     failedReason
 
-            reportBackgroundFailure state status, Cmd.none
+            reportBackgroundFailure state status, refresh
 
     | OrganizeNothingToMove ->
         match state.Screen with

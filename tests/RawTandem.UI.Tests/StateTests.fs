@@ -8,6 +8,7 @@ open RawTandem.Core.FolderScan
 open RawTandem.Core.Organization
 open RawTandem.Core.Deletion
 open RawTandem.UI.State
+open RawTandem.UI.ScenarioTests
 
 /// Image factice pour les tests : seul le fait qu'elle soit l'image courante
 /// (ou une obsolète) compte, jamais les pixels.
@@ -145,6 +146,57 @@ let stateTests =
                     let scanned = state |> update' (FolderScanned fixtureScan)
 
                     Expect.equal scanned.Screen (Working Organizing) "le nouveau dossier s'ouvre à l'organisation"
+                } ]
+
+          testList
+              "folder rescan"
+              [ test "FolderRescanned on the current folder replaces the stale scan and nothing else" {
+                    // Bug du scan périmé après organisation (2026-10-24) : les
+                    // RAW déplacés sont encore notés à la racine. Le rafraîchissement
+                    // remplace le scan — et rien d'autre : ni l'écran (une question
+                    // affichée n'est jamais refermée), ni le bandeau du bilan.
+                    let staleScan = { emptyScan with TandemsToOrganize = [ tandem "P1" ] }
+                    let freshScan = { emptyScan with OrganizedTandems = [ tandem "P1" ] }
+                    let state = { triaging' () with Scan = staleScan }
+
+                    let refreshed = state |> update' (FolderRescanned(fixtureFolderPath, freshScan))
+
+                    Expect.equal refreshed.Scan freshScan "le scan périmé est remplacé"
+                    Expect.equal refreshed.Screen (Working Triaging) "l'écran ne bouge pas"
+                    Expect.equal refreshed.Status (triaging' ()).Status "le bandeau ne bouge pas"
+                }
+
+                test "FolderRescanned keeps a pending question open" {
+                    let staleScan = { emptyScan with TandemsToOrganize = fixtureStems |> List.map tandem }
+                    let freshScan = { emptyScan with OrganizedTandems = fixtureStems |> List.map tandem }
+                    let state =
+                        { triaging' () with Scan = staleScan }
+                        |> update' DeleteTandemRequested
+
+                    let refreshed = state |> update' (FolderRescanned(fixtureFolderPath, freshScan))
+
+                    Expect.equal
+                        refreshed.Screen
+                        (Confirming(Triaging, DeleteTandem fixtureStems.[0]))
+                        "la question en attente reste affichée"
+                    Expect.equal refreshed.Scan freshScan "le scan est rafraîchi sous la question"
+                }
+
+                test "FolderRescanned from another folder is ignored" {
+                    let staleScan = { emptyScan with TandemsToOrganize = [ tandem "P1" ] }
+                    let state = { triaging' () with Scan = staleScan }
+                    let freshScan = { emptyScan with OrganizedTandems = [ tandem "P1" ] }
+
+                    let refreshed = state |> update' (FolderRescanned(otherFolderPath, freshScan))
+
+                    Expect.equal refreshed.Scan staleScan "le scan d'un autre dossier n'écrase rien"
+                }
+
+                test "FolderRescanFailed reports in the status without changing screen" {
+                    let state = triaging' () |> update' (FolderRescanFailed "acces refuse")
+
+                    Expect.equal state.Screen (Working Triaging) "l'écran ne bouge pas"
+                    Expect.isTrue (state.Status.StartsWith ErrorStatusPrefix) "l'échec est visible dans le bandeau"
                 } ]
 
           testList
@@ -1093,4 +1145,4 @@ let stateTests =
 
 [<EntryPoint>]
 let main args =
-    runTestsWithCLIArgs [] args stateTests
+    runTestsWithCLIArgs [] args (testList "RawTandem.UI tests" [ stateTests; scenarioTests ])
