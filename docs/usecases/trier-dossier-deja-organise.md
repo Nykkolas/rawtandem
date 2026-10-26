@@ -14,12 +14,12 @@ minimal guarantee: aucun fichier n'est effacé, tout est récupérable
 1. Ouvrir le répertoire "Photos" (un dossier avec des photos au format JPG, un sous-répertoire RAW et les fichiers RW2 correspondant aux JPG dans ce sous-répertoire)
 2. L'application affiche directement le mode tri (le dossier est déjà organisé : rien à proposer)
 3. L'utilisateur navigue dans les photos JPG affichées à l'écran
-4. L'application affiche la photo en cours
+4. L'application affiche la photo en cours et le nom du fichier (XXXX.JPG)
 5. L'utilisateur demande la suppression d'une photo
 6. L'application demande à confirmer la suppression en affichant le nom du fichier à supprimer
 7. L'utilisateur confirme 
 8. Les fichiers JPG et RW2 sont envoyés vers la corbeille
-9. L'utilisateur répète les étapes 2 à 6 jusqu'à ce qu'il n'y ait plus de photo à supprimer
+9. L'utilisateur répète les étapes 3 à 8 jusqu'à ce qu'il n'y ait plus de photo à supprimer
 
 # Extensions
 TODO

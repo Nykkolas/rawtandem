@@ -132,10 +132,15 @@ let scenarioTests =
                     Expect.isTrue (File.Exists(Path.Combine(rawDir, stem + ".RW2"))) "le RW2 est rangé dans RAW/"
                     Expect.isTrue (File.Exists(Path.Combine(pellicule, stem + ".JPG"))) "le JPG reste à la racine"
 
-                // UC-7 : navigation vers la deuxième photo. L'affichage du JPG
-                // n'est pas testé : fichiers vides, le chargement réel échoue.
+                // UC-7 : navigation vers la deuxième photo. Le rendu visuel du
+                // JPG n'est pas testé : fichiers vides, le chargement réel échoue.
                 let s7 = s6 |> step NextClicked
                 Expect.equal s7.CurrentIndex 1 "photo courante : P2"
+
+                // UC-8 : l'application affiche la photo en cours et le nom du
+                // fichier JPG (XXXX.JPG) — le nom exposé par l'état est testé,
+                // le rendu (TextBlock) ne l'est pas.
+                Expect.equal (currentJpgFileName s7) (Some "P2.JPG") "UC-8 : le nom du fichier JPG courant est affiché"
 
                 // UC-8 : l'utilisateur demande la suppression.
                 // UC-9 : l'application affiche le nom du fichier à supprimer.
@@ -175,10 +180,15 @@ let scenarioTests =
                 Expect.equal s2.Scan.TandemsToOrganize.Length 0 "aucun couple à organiser"
                 Expect.equal s2.Scan.OrganizedTandems.Length 3 "3 couples déjà organisés"
 
-                // UC-3 : navigation vers la deuxième photo. UC-4 : l'affichage
-                // du JPG n'est pas testé : fichiers vides, le chargement réel échoue.
+                // UC-3 : navigation vers la deuxième photo. Le rendu visuel du
+                // JPG n'est pas testé : fichiers vides, le chargement réel échoue.
                 let s3 = s2 |> step NextClicked
                 Expect.equal s3.CurrentIndex 1 "photo courante : P2"
+
+                // UC-4 : l'application affiche la photo en cours et le nom du
+                // fichier JPG (XXXX.JPG) — le nom exposé par l'état est testé,
+                // le rendu (TextBlock) ne l'est pas.
+                Expect.equal (currentJpgFileName s3) (Some "P2.JPG") "UC-4 : le nom du fichier JPG courant est affiché"
 
                 // UC-5 : l'utilisateur demande la suppression.
                 // UC-6 : l'application affiche le nom du fichier à supprimer.

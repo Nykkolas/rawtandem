@@ -830,6 +830,35 @@ let stateTests =
                 } ]
 
           testList
+              "view model"
+              [ // Fonctions pures State -> sémantique de présentation (TODO
+                // « modèle de vue ») : la vue ne garde que le mapping
+                // sémantique -> pixels, le testable vit ici.
+                test "currentJpgFileName exposes the scanned name of the current tandem" {
+                    let state = triaging' () |> update' NextClicked
+                    Expect.equal (currentJpgFileName state) (Some "P2.JPG") "nom du fichier JPG courant, index 1"
+                }
+
+                test "currentJpgFileName respects the original casing from the scan" {
+                    // Le scan respecte la casse des noms sur disque : le nom
+                    // affiché est celui qui existe, pas une reconstruction.
+                    // Dossier déjà organisé : le tri est affiché directement.
+                    let scan = { emptyScan with OrganizedTandems = [ { Stem = "P2"; JpgFileName = "p2.JPG"; RawFileName = "P2.RW2" } ] }
+                    let state = init' () |> update' (FolderSelected fixtureFolderPath) |> update' (FolderScanned scan)
+
+                    Expect.equal state.Screen (Working Triaging) "tri direct : le dossier n'a rien à organiser"
+                    Expect.equal (currentJpgFileName state) (Some "p2.JPG") "la casse du scan est préservée"
+                }
+
+                test "currentJpgFileName is None when no tandem is triable" {
+                    let scan = { emptyScan with OrphanJpgs = [ "PX.JPG" ] }
+                    let state = init' () |> update' (FolderSelected fixtureFolderPath) |> update' (FolderScanned scan)
+
+                    Expect.equal state.Screen (Working Triaging) "tri direct : rien à remettre en ordre"
+                    Expect.isNone (currentJpgFileName state) "aucune photo courante"
+                } ]
+
+          testList
               "tandem deletion"
               [ test "DeleteTandemRequested opens a Confirming screen for the current photo" {
                     let state = triaging' () |> update' DeleteTandemRequested

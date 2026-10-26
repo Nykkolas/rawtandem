@@ -111,11 +111,21 @@ let triableTandems (state: State) =
 [<Literal>]
 let private JpgDecodeWidth = 2048
 
+/// Tandem courant dans le tri (None si la liste est vide) : sert au stem et au
+/// nom de fichier exposés à la vue.
+let private currentTandem (state: State) =
+    triableTandems state |> List.tryItem state.CurrentIndex
+
 /// Stem du tandem courant dans le tri (None si la liste est vide).
 let private currentStem (state: State) =
-    triableTandems state
-    |> List.tryItem state.CurrentIndex
-    |> Option.map (fun tandem -> tandem.Stem)
+    currentTandem state |> Option.map (fun tandem -> tandem.Stem)
+
+/// Nom du fichier JPG du tandem courant, tel que scanné (casse d'origine
+/// comprise — c'est lui qui existe sur disque, pas une reconstruction) :
+/// la vue de tri l'affiche (UC organiser-et-trier-dossier étape 8,
+/// trier-dossier-deja-organise étape 4). None si aucune photo n'est triable.
+let currentJpgFileName (state: State) =
+    currentTandem state |> Option.map (fun tandem -> tandem.JpgFileName)
 
 /// Libère la mémoire d'une image : un bitmap décodé n'attend pas le garbage
 /// collector, la navigation reste légère photo après photo.

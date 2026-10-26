@@ -304,14 +304,14 @@ let private organizingView (state: State) (dispatch: Msg -> unit) =
 let private triagingView (state: State) (dispatch: Msg -> unit) =
     let visibleTandems = triableTandems state
     let photoCount = visibleTandems.Length
-    let currentStem =
-        visibleTandems
-        |> List.tryItem state.CurrentIndex
-        |> Option.map (fun tandem -> tandem.Stem)
+    // Nom du fichier JPG courant, tel que scanné (casse d'origine) : affiché
+    // dans la barre de navigation — UC organiser-et-trier-dossier étape 8,
+    // trier-dossier-deja-organise étape 4.
+    let currentFileName = currentJpgFileName state
 
     let viewerText =
-        match currentStem with
-        | Some stem -> sprintf "Chargement de %s.JPG…" stem
+        match currentFileName with
+        | Some fileName -> sprintf "Chargement de %s…" fileName
         | None -> "Aucune photo dans ce dossier."
 
     let counter =
@@ -328,6 +328,27 @@ let private triagingView (state: State) (dispatch: Msg -> unit) =
                 Button.onClick (fun args -> pickFolder args.Source dispatch |> Async.StartImmediate)
                 Button.content "Ouvrir un autre dossier…"
             ]
+            // Légende attachée à la photo (principe de proximité) : le nom du
+            // fichier à gauche, la progression à droite — l'œil ne quitte pas
+            // la zone de décision.
+            DockPanel.create [
+                DockPanel.dock Dock.Top
+                DockPanel.margin (Thickness(20.0, 12.0, 20.0, 0.0))
+                DockPanel.children [
+                    TextBlock.create [
+                        TextBlock.text (currentFileName |> Option.defaultValue "")
+                        TextBlock.dock Dock.Left
+                        TextBlock.fontSize 16.0
+                    ]
+                    TextBlock.create [
+                        TextBlock.text counter
+                        TextBlock.dock Dock.Right
+                        TextBlock.fontSize 16.0
+                        TextBlock.foreground Brushes.DimGray
+                        TextBlock.horizontalAlignment HorizontalAlignment.Right
+                    ]
+                ]
+            ]
             Button.create [
                 Button.dock Dock.Bottom
                 Button.content "Supprimer le tandem"
@@ -335,31 +356,29 @@ let private triagingView (state: State) (dispatch: Msg -> unit) =
                 Button.fontSize 16.0
                 Button.padding (Thickness(16.0, 8.0))
                 Button.horizontalAlignment HorizontalAlignment.Center
+                Button.margin (Thickness(0.0, 0.0, 0.0, 12.0))
                 Button.isEnabled (photoCount > 0)
                 Button.onClick (fun _ -> dispatch DeleteTandemRequested)
             ]
-            StackPanel.create [
-                StackPanel.dock Dock.Bottom
-                StackPanel.orientation Orientation.Horizontal
-                StackPanel.horizontalAlignment HorizontalAlignment.Center
-                StackPanel.spacing 12.0
-                StackPanel.margin (Thickness(0.0, 12.0, 0.0, 8.0))
-                StackPanel.children [
-                    Button.create [
-                        Button.content "Précédent"
-                        Button.isEnabled (state.CurrentIndex > 0)
-                        Button.onClick (fun _ -> dispatch PreviousClicked)
-                    ]
-                    TextBlock.create [
-                        TextBlock.text counter
-                        TextBlock.verticalAlignment VerticalAlignment.Center
-                    ]
-                    Button.create [
-                        Button.content "Suivant"
-                        Button.isEnabled (state.CurrentIndex < photoCount - 1)
-                        Button.onClick (fun _ -> dispatch NextClicked)
-                    ]
-                ]
+            // Navigation flanquante : les gestes les plus fréquents aux bords
+            // de la photo, loin du bouton destructif.
+            Button.create [
+                Button.dock Dock.Left
+                Button.verticalAlignment VerticalAlignment.Center
+                Button.margin (Thickness(20.0, 0.0, 0.0, 0.0))
+                Button.fontSize 22.0
+                Button.content "◄"
+                Button.isEnabled (state.CurrentIndex > 0)
+                Button.onClick (fun _ -> dispatch PreviousClicked)
+            ]
+            Button.create [
+                Button.dock Dock.Right
+                Button.verticalAlignment VerticalAlignment.Center
+                Button.margin (Thickness(0.0, 0.0, 20.0, 0.0))
+                Button.fontSize 22.0
+                Button.content "►"
+                Button.isEnabled (state.CurrentIndex < photoCount - 1)
+                Button.onClick (fun _ -> dispatch NextClicked)
             ]
             Border.create [
                 Border.margin (Thickness(20.0))
