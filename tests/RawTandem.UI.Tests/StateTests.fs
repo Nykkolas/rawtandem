@@ -827,6 +827,24 @@ let stateTests =
                     let state = organizing' () |> update' NextClicked
                     Expect.equal state.CurrentIndex 0 "index inchangé"
                     Expect.equal state.Screen (Working Organizing) "écran inchangé"
+                }
+
+                test "FirstPhotoRequested jumps to the first photo" {
+                    let last = fixtureStems.Length - 1
+                    let state = { triaging' () with CurrentIndex = last } |> update' FirstPhotoRequested
+                    Expect.equal state.CurrentIndex 0 "index ramené au premier"
+                }
+
+                test "LastPhotoRequested jumps to the last photo" {
+                    let last = fixtureStems.Length - 1
+                    let state = triaging' () |> update' LastPhotoRequested
+                    Expect.equal state.CurrentIndex last "index porté au dernier"
+                }
+
+                test "FirstPhotoRequested and LastPhotoRequested do nothing outside the Triaging screen" {
+                    let expected = organizing' ()
+                    Expect.equal (expected |> update' FirstPhotoRequested) expected "rien ne change hors du tri"
+                    Expect.equal (expected |> update' LastPhotoRequested) expected "rien ne change hors du tri"
                 } ]
 
           testList

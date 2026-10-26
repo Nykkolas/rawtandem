@@ -57,7 +57,9 @@ let private step (msg: Msg) (state: State) : State =
 /// aucune photo, seuls les noms appariés comptent. Le dossier est un déchet de
 /// test recréé à chaque lancement, détruit en finally (pas des photos).
 let private withPellicule (run: string -> unit) =
-    let folder = Path.Combine(Path.GetTempPath(), "rawtandem-scenario-Pellicule")
+    // Dossier unique : Expecto exécute les tests en parallèle, deux scénarios
+    // ne doivent pas partager leurs déchets.
+    let folder = Path.Combine(Path.GetTempPath(), sprintf "rawtandem-scenario-Pellicule-%s" (Guid.NewGuid().ToString("N")))
 
     if Directory.Exists folder then Directory.Delete(folder, true)
 
@@ -78,7 +80,9 @@ let private withPellicule (run: string -> unit) =
 /// les noms appariés comptent. Le dossier est un déchet de test recréé à
 /// chaque lancement, détruit en finally (pas des photos).
 let private withPhotos (run: string -> unit) =
-    let folder = Path.Combine(Path.GetTempPath(), "rawtandem-scenario-Photos")
+    // Dossier unique : Expecto exécute les tests en parallèle, deux scénarios
+    // ne doivent pas partager leurs déchets.
+    let folder = Path.Combine(Path.GetTempPath(), sprintf "rawtandem-scenario-Photos-%s" (Guid.NewGuid().ToString("N")))
 
     if Directory.Exists folder then Directory.Delete(folder, true)
 
@@ -212,4 +216,43 @@ let scenarioTests =
                     [ yield! Directory.EnumerateFiles(photos)
                       yield! Directory.EnumerateFiles(rawDir) ]
                 Expect.equal present.Length 4 "P1 et P3 restent des deux côtés, seuls les fichiers de P2 sont partis")
+        }
+
+        /// Scénario exécutable de docs/usecases/regles-communes.md, règle RC-01.
+        /// Coverage générique : un seul test pour toutes les vues de tri.
+        ///
+        /// Le test ne joue que les gestes de l'utilisateur. Le mapping clavier
+        /// → message vit dans la vue (Main.fs, KeyDown) : la touche et le bouton
+        /// dispatchent le même message (règle RC-01 « identiques selon le
+        /// mapping »). Ce branchement vue n'est pas testable en headless —
+        /// non couvert, comme le sélecteur natif de dossier.
+        test "RC-01 common rule : keyboard interactions in the triaging view" {
+            withPhotos (fun photos ->
+                // Précondition RC-01 : une vue de tri (dossier organisé, 3 photos).
+                let s = init () |> fst |> step (FolderSelected photos)
+                Expect.equal s.Screen (Working Triaging) "la vue de tri est affichée"
+
+                // RC-01 : flèche gauche sur la première photo → arrêt.
+                let sLeft = s |> step PreviousClicked
+                Expect.equal sLeft.CurrentIndex 0 "arrêt à la première photo"
+
+                // RC-01 : flèche droite jusqu'à la dernière → arrêt.
+                let s1 = s |> step NextClicked
+                Expect.equal s1.CurrentIndex 1 "flèche droite : photo courante P2"
+                let s2 = s1 |> step NextClicked
+                Expect.equal s2.CurrentIndex 2 "flèche droite : photo courante P3"
+                let s3 = s2 |> step NextClicked
+                Expect.equal s3.CurrentIndex 2 "arrêt à la dernière photo"
+
+                // RC-01 : Home → première photo, End → dernière photo.
+                let sHome = s3 |> step FirstPhotoRequested
+                Expect.equal sHome.CurrentIndex 0 "Home : photo courante P1"
+                Expect.equal (currentJpgFileName sHome) (Some "P1.JPG") "RC-01 observable effect : le nom affiché suit la sélection"
+                let sEnd = sHome |> step LastPhotoRequested
+                Expect.equal sEnd.CurrentIndex 2 "End : photo courante P3"
+                Expect.equal (currentJpgFileName sEnd) (Some "P3.JPG") "RC-01 observable effect : le nom affiché suit la sélection"
+
+                // RC-01 : Suppr → l'écran de confirmation RC-02 s'affiche.
+                let sDel = sEnd |> step DeleteTandemRequested
+                Expect.equal sDel.Screen (Confirming(Triaging, DeleteTandem "P3")) "Suppr : la confirmation RC-02 s'affiche pour la photo courante")
         } ]

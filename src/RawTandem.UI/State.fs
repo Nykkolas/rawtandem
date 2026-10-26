@@ -70,6 +70,8 @@ type Msg =
     | StartTriagingClicked
     | PreviousClicked
     | NextClicked
+    | FirstPhotoRequested
+    | LastPhotoRequested
     | DeleteTandemRequested
     | DeleteTandemConfirmed
     | DeleteTandemCompleted of folderPath: string * stem: string * outcome: DeletionOutcome
@@ -626,6 +628,25 @@ let update (msg: Msg) (state: State) : State * Cmd<Msg> =
             let nextState =
                 { state with CurrentIndex = next (triableTandems state).Length state.CurrentIndex }
 
+            nextState, loadCurrentJpgCmd nextState
+        | Working _ | Confirming _ -> state, Cmd.none
+
+    // RC-01 (docs/usecases/regles-communes.md) : Home → première photo,
+    // End → dernière photo. Mêmes gardes et même rechargement que les
+    // flèches : la garde est dans update, le mapping touche → message
+    // dans la vue.
+    | FirstPhotoRequested ->
+        match state.Screen with
+        | Working Triaging ->
+            let nextState = { state with CurrentIndex = 0 }
+            nextState, loadCurrentJpgCmd nextState
+        | Working _ | Confirming _ -> state, Cmd.none
+
+    | LastPhotoRequested ->
+        match state.Screen with
+        | Working Triaging ->
+            let count = (triableTandems state).Length
+            let nextState = { state with CurrentIndex = bounded count (count - 1) }
             nextState, loadCurrentJpgCmd nextState
         | Working _ | Confirming _ -> state, Cmd.none
 
