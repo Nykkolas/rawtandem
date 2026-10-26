@@ -20,6 +20,15 @@
 - Le workflow CI exécute les tests puis publie les binaires en GitHub Release (à mettre en place ; voir `docs/TODO.md`).
 - Après le push du tag, vérifier le run et la Release obtenue, et rapporter le résultat.
 
+### Workflow "la spec est le UC" (adopté le 2026-10-26, éprouvé sur trier-dossier)
+- La boucle complète (UC → questionnement forme/fond sans plume → test E2E relu → « go » →
+  implémentation TDD → vérification utilisateur → commit) vit dans `docs/SPEC-UC.md`
+  (agents-shared) : la lire avant de démarrer une fonctionnalité ou une correction.
+- Spécifique au projet : UC dans `docs/usecases/` (un fichier par UC) ; scénarios exécutables
+  dans `tests/RawTandem.UI.Tests/ScenarioTests.fs` avec l'interpréteur `step` (le test ne joue
+  que les gestes de l'utilisateur, les commandes Elmish sont exécutées réellement en cascade,
+  vraie corbeille OS sur dossier temporaire).
+
 ## 🌍 Langue
 
 - **Code en anglais** : identifiants, fonctions, modules, messages Elmish, noms de tests.
@@ -33,6 +42,7 @@ Ces fichiers sont des symlinks vers `~/Source/agents-shared/` :
 - **F# / Elmish** : lire `docs/FSHARP.md` avant d'écrire ou de modifier du F# (pattern Elmish, commandes async, design with types, aléatoire/crypto, casing, tests).
 - **Avalonia.FuncUI** : lire `docs/AVALONIA.md` avant de toucher l'UI (DSL, types géométriques, contrôles, feedback, clipboard, fenêtre).
 - **Audit générique** : `docs/AUDIT-GENERIC.md`, complété par la checklist locale `docs/AUDIT.md`.
+- **Spec = UC** : `docs/SPEC-UC.md`, workflow de spécification par use cases (la boucle complète y vit).
 - **Erreurs transverses** : `docs/ERREURS-GENERIC.md`, leçons génériques à ne pas reproduire ; y promouvoir les leçons locales génériques (procédure dans DECISIONS.md d'agents-shared).
 
 ## 🛡️ Opérations fichiers (sécurité des données)
