@@ -269,7 +269,11 @@ let organizationTests =
 
           // ---------- normalizeRawFolderName ----------
 
-          test "normalizeRawFolderName renames a wrong-case folder to RAW" {
+          // « raw » distinct de « RAW » : impossible sur un FS insensible à
+          // la casse (NTFS) — sonde de capacité, voir TestHelpers.
+          testCaseSensitiveOnly
+              "normalizeRawFolderName renames a wrong-case folder to RAW"
+              (fun () ->
               let folder = tempFolder ()
               let wrongCase = Path.Combine(folder, "raw")
               Directory.CreateDirectory(wrongCase) |> ignore
@@ -279,10 +283,14 @@ let organizationTests =
 
               Expect.isTrue (Directory.Exists(Path.Combine(folder, RawSubfolderName))) "le dossier est renommé en RAW"
               Expect.isFalse (Directory.Exists(wrongCase)) "l'ancien nom a disparu"
-              Expect.isTrue (File.Exists(Path.Combine(folder, RawSubfolderName, "P1.RW2"))) "le contenu suit"
-          }
+              Expect.isTrue (File.Exists(Path.Combine(folder, RawSubfolderName, "P1.RW2"))) "le contenu suit")
 
-          test "normalizeRawFolderName refuses to run when RAW already exists" {
+          // Deux dossiers « raw » et « RAW » distincts : impossible sur un FS
+          // insensible à la casse (NTFS) — le test y passerait pour une raison
+          // erronée (même dossier), sonde de capacité.
+          testCaseSensitiveOnly
+              "normalizeRawFolderName refuses to run when RAW already exists"
+              (fun () ->
               let folder = tempFolder ()
               let wrongCase = Path.Combine(folder, "raw")
               Directory.CreateDirectory(wrongCase) |> ignore
@@ -290,5 +298,4 @@ let organizationTests =
 
               Expect.throws
                   (fun () -> normalizeRawFolderName folder "raw")
-                  "le renommage est refusé si « RAW » existe déjà"
-          } ]
+                  "le renommage est refusé si « RAW » existe déjà") ]

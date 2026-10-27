@@ -209,7 +209,9 @@ let folderScanTests =
           test "scanFolder ignores files that are neither JPG nor RW2 and other subfolders" {
               let folder = tempFolder ()
               touch folder "notes.txt"
-              let other = Path.Combine(folder, " vacances 2026 ")
+              // Espaces internes seulement : NTFS tronque silencieusement
+              // les espaces de fin de nom, la fixture y serait introuvable.
+              let other = Path.Combine(folder, " vacances 2026")
               Directory.CreateDirectory(other) |> ignore
               touch other "P1230001.JPG"
 
@@ -219,7 +221,11 @@ let folderScanTests =
               Expect.isNone scan.RawFolderIssue "pas d'anomalie signalée pour un dossier ordinaire"
           }
 
-          test "scanFolder reports a RAW folder name with wrong case and ignores its files" {
+          // « raw » distinct de « RAW » : impossible sur un FS insensible
+          // à la casse (NTFS) — sonde de capacité, voir TestHelpers.
+          testCaseSensitiveOnly
+              "scanFolder reports a RAW folder name with wrong case and ignores its files"
+              (fun () ->
               let folder = tempFolder ()
               let wrongCase = Path.Combine(folder, "raw")
               Directory.CreateDirectory(wrongCase) |> ignore
@@ -228,10 +234,13 @@ let folderScanTests =
               let scan = scanFolder folder
 
               Expect.equal scan.RawFolderIssue (Some(RawFolderCaseMismatch "raw")) "anomalie de casse signalée"
-              Expect.isEmpty scan.FiledOrphanRaws "le contenu du dossier mal cassé est invisible tant qu'il n'est pas renommé"
-          }
+              Expect.isEmpty scan.FiledOrphanRaws "le contenu du dossier mal cassé est invisible tant qu'il n'est pas renommé")
 
-          test "scanFolder stays silent about a wrong-case folder when RAW exists" {
+          // Deux dossiers « raw » et « RAW » distincts : impossible sur un
+          // FS insensible à la casse (NTFS) — sonde de capacité.
+          testCaseSensitiveOnly
+              "scanFolder stays silent about a wrong-case folder when RAW exists"
+              (fun () ->
               let folder = tempFolder ()
               let wrongCase = Path.Combine(folder, "raw")
               Directory.CreateDirectory(wrongCase) |> ignore
@@ -239,8 +248,7 @@ let folderScanTests =
 
               let scan = scanFolder folder
 
-              Expect.isNone scan.RawFolderIssue "« raw » est un sous-dossier ordinaire quand « RAW » existe"
-          }
+              Expect.isNone scan.RawFolderIssue "« raw » est un sous-dossier ordinaire quand « RAW » existe")
 
           test "scanFolder reports RAW being a file, not a directory" {
               let folder = tempFolder ()
@@ -252,7 +260,11 @@ let folderScanTests =
               Expect.isEmpty scan.TandemsToOrganize "rien n'est organisable tant que l'anomalie n'est pas résolue"
           }
 
-          test "scanFolder reports case twins of the same extension in one directory" {
+          // Jumeaux de casse : impossible sur un FS insensible (NTFS) —
+          // sonde de capacité, voir TestHelpers.
+          testCaseSensitiveOnly
+              "scanFolder reports case twins of the same extension in one directory"
+              (fun () ->
               // Bug confirmé en itération 3 : P1.JPG + P1.jpg coexistent sur un
               // filesystem sensible à la casse ; aucun ne doit être avalé.
               let folder = tempFolder ()
@@ -270,10 +282,11 @@ let folderScanTests =
               Expect.equal
                   scan.CaseCollisions
                   [ { FileName = "P1.jpg"; InRawSubfolder = false } ]
-                  "le jumeau de casse est signalé, jamais avalé"
-          }
+                  "le jumeau de casse est signalé, jamais avalé")
 
-          test "scanFolder reports case twins inside the RAW subfolder too" {
+          testCaseSensitiveOnly
+              "scanFolder reports case twins inside the RAW subfolder too"
+              (fun () ->
               let folder = tempFolder ()
               let raw = rawSubfolder folder
               touch raw "P1.RW2"
@@ -285,8 +298,7 @@ let folderScanTests =
               Expect.equal
                   scan.CaseCollisions
                   [ { FileName = "P1.rw2"; InRawSubfolder = true } ]
-                  "le jumeau de RAW/ est signalé avec son emplacement"
-          }
+                  "le jumeau de RAW/ est signalé avec son emplacement")
 
           test "scanFolder sorts every category by stem for a stable display" {
               let folder = tempFolder ()
@@ -337,8 +349,10 @@ let folderScanTests =
           test "tandemJpgPath combines the folder with the JPG file name, whatever its case" {
               // Le JPG d'un tandem triable est toujours à la racine ; le nom
               // réel du fichier (casse d'origine comprise) sert au chemin.
+              // Attendus construits avec Path.Combine : jamais de séparateur
+              // littéral, il diffère selon la plateforme.
               let mixedCase = { Stem = "P1"; JpgFileName = "P1.jpg"; RawFileName = "P1.RW2" }
 
-              Expect.equal (tandemJpgPath "/dossier" (tandem "P1")) "/dossier/P1.JPG" "chemin complet du JPG à la racine"
-              Expect.equal (tandemJpgPath "/dossier" mixedCase) "/dossier/P1.jpg" "le nom de fichier d'origine est respecté"
+              Expect.equal (tandemJpgPath "/dossier" (tandem "P1")) (Path.Combine("/dossier", "P1.JPG")) "chemin complet du JPG à la racine"
+              Expect.equal (tandemJpgPath "/dossier" mixedCase) (Path.Combine("/dossier", "P1.jpg")) "le nom de fichier d'origine est respecté"
           } ]

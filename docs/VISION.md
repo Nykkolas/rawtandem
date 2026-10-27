@@ -29,7 +29,7 @@ Un trieur de photos qui considère chaque cliché comme **un couple JPG+RAW** :
 | Workflow | 3 phases : accueil → organisation (déplacement des RAW, avec confirmation) → tri |
 | Cible RAW | `.RW2` uniquement (autres formats en évolution, voir `docs/TODO.md`) |
 | Suppression | Corbeille OS, jamais de suppression définitive |
-| Suppression (implémentation) | Le Core calcule un plan (`Deletion.planDeletion` : chemins complets du JPG à la racine et du RAW selon son emplacement, donné par la requête du scan `FolderScan.findTriableTandem`), l'UI l'exécute via `gio trash` (freedesktop), fichier par fichier : l'échec d'un fichier n'interrompt pas l'autre, ni ne retire le tandem du scan ; suppression complète confirmée dans le bandeau bas, le tandem quitte le scan et l'index s'ajuste sur la liste visible |
+| Suppression (implémentation) | Le Core calcule un plan (`Deletion.planDeletion` : chemins complets du JPG à la racine et du RAW selon son emplacement, donné par la requête du scan `FolderScan.findTriableTandem`), l'UI l'exécute via `Deletion.sendToTrash` (RC-03 : corbeille système multi-plateforme — `gio trash` sous Linux, shell32 sous Windows), fichier par fichier : l'échec d'un fichier n'interrompt pas l'autre, ni ne retire le tandem du scan ; suppression complète confirmée dans le bandeau bas, le tandem quitte le scan et l'index s'ajuste sur la liste visible |
 | Ouverture de dossier | Sélecteur de dossier natif Avalonia (`StorageProvider.OpenFolderPickerAsync`) ; aucun message si l'utilisateur annule |
 | Changement de dossier | « Ouvrir un autre dossier… » disponible sur tous les écrans où un dossier est actif (organisation, tri) ; une question affichée doit être tranchée d'abord (jamais refermée par la navigation) ; l'écran courant reste pendant l'analyse du nouveau dossier |
 | Scan du dossier | **Racine + sous-dossier `RAW/`** ; les autres sous-dossiers sont ignorés en silence |
@@ -50,12 +50,13 @@ Un trieur de photos qui considère chaque cliché comme **un couple JPG+RAW** :
 | Raccourcis clavier | ← / → pour la navigation, `Suppr` pour demander la suppression d'un tandem |
 | Visualisation (itération 4) | Le tri affiche le JPG du tandem courant — jamais le RAW, trop lourd. Décodage via `Bitmap.DecodeToWidth` à 2048 px (TZ200 : 4896 px de large ; ~12 Mo au lieu de ~70 Mo par photo), ratio préservé. Cadre noir autour de la photo (fond noir sur toute la zone + bande de 14 px, effet salle obscure pour faire ressortir les couleurs), séparateur 1 px gris sombre pour que les photos aux bords noirs ne fondent pas dans le cadre. Une image lente qui arrive après une navigation est ignorée (contrôle par stem), l'ancienne image est libérée dès qu'elle quitte l'écran ; échecs de chargement signalés dans le bandeau bas |
 | Couverture de code | Via `coverlet.collector` + `YoloDev.Expecto.TestSdk` (tests exécutés par `dotnet test`, pas d'EXE dédié — préférence transverse consignée dans agents-shared `DECISIONS.md`) ; installée le 2026-10-23, rapport ReportGenerator dans `coveragereport/` |
+| Multi-plateforme (2026-10-27) | Linux **et** Windows supportés (décision structurante, RC-03 en est la première application) ; macOS de côté pour la corbeille (hors scope RC-03). Chemins via `Path.Combine`, fixtures portables, états dépendant de la casse derrière la sonde `isCaseSensitiveFileSystem` (capacité du FS, pas test d'OS), CI en matrice ubuntu + windows |
 
 ## Hors périmètre (pour l'instant)
 
 - Développement/retouche photo, gestion de catalogue.
 - Support d'autres formats RAW (CR2, CR3, NEF, ARW, DNG…) — listé en évolution.
-- Corbeille OS sur Windows/macOS — Linux d'abord.
+- Corbeille OS sur macOS — hors scope pour le moment (RC-03 : Linux et Windows couverts).
 
 ## Méthode de travail
 

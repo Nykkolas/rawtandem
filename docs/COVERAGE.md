@@ -9,6 +9,10 @@ tests (après nettoyage des `TestResults/`), rapports fusionnés par ReportGener
 dans `coveragereport/`. Les pourcentages sont en lignes ; `State.fs` est la
 logique Elmish couverte par les tests headless — App/Main/Program (wiring
 Avalonia) restent à 0 %, c'est un plafond connu, pas une dette.
+La plateforme de la mesure est notée quand elle change ; le delta se lit
+entre mesures de même plateforme (les branches dispatchées par plateforme
+et les tests ignorés par sonde de capacité ne sont couverts que là où ils
+tournent).
 
 | Date | Total | Branches | Core | UI | State.fs | Écart / note |
 |---|---|---|---|---|---|---|
@@ -21,3 +25,4 @@ Avalonia) restent à 0 %, c'est un plafond connu, pas une dette.
 | 2026-10-26 (6) | 57,3 % | 74,2 % | 99,4 % | 47,3 % | 97,5 % | Règle RC-01 plein écran (F/F11/double-clic, Echap, garde confirmation) : machine couverte (State +0,1 pt), tout l'écart en lignes de vue `Main.fs` (composition plein écran, icône en Border — plafond headless déclaré) ; Core stable |
 | 2026-10-26 (7) | 55,6 % | 73,4 % | 99,4 % | 45,6 % | 97,5 % | Suite RC-01 plein écran : vrai écran OS (WindowState.FullScreen par subscription clée) + statut éphémère 3 s en plein écran (StatusHidden, minuterie par subscription) : machine couverte, écart en lignes de vue/subscriptions `Main.fs` (plafond headless déclaré) ; State et Core stables |
 | 2026-10-26 (8) | 56,9 % | 74,7 % | 99,4 % | 47,2 % | 97,6 % | Refactor : l'éphémérisation du statut quitte la vue (minuterie supprimée de Main.fs) pour la machine — enveloppe `update` planifiant une commande temporisée (StatusHidden) ; désormais couverte par un scénario E2E (délai réel attendu, suite UI ~14 s) + 3 tests unitaires miroir ; State +0,1 pt, branches +1,3 pt |
+| 2026-10-27 (1) — Windows | 56,7 % | 72,6 % | 94,5 % | 47,1 % | 97,6 % | Première mesure sous Windows (RC-03) : Core −4,9 pts, entièrement expliqué par la plateforme — branches Linux de `sendToTrash` (`gio`, erreur stderr non vide) non exécutées ici, et 6 tests casse ignorés sur NTFS (sonde) → `normalizeRawFolderName` + agrégation `CaseCollisions` non couverts sur cette mesure ; miroir : `WindowsRecycle` n'est couvert que sous Windows ; UI/State stables |

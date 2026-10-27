@@ -49,7 +49,7 @@ Ces fichiers sont des symlinks vers `~/Source/agents-shared/` :
 ## 🛡️ Opérations fichiers (sécurité des données)
 
 - **Corbeille OS obligatoire** : jamais de suppression définitive directe (`File.Delete`).
-- Sous Linux : passer par `gio trash` (ou l'API Trash freedesktop) ; les fichiers doivent être récupérables.
+- Sous Linux : passer par `gio trash` (ou l'API Trash freedesktop) ; sous Windows : corbeille système via shell32 (`Deletion.sendToTrash`, RC-03). Les fichiers doivent être récupérables.
 - **Aucune écriture, déplacement ou suppression de fichier hors de ce que le Core a planifié** : le Core calcule la liste des fichiers concernés, l'UI n'exécute que ce plan.
 - Les photos sont irremplaçables : toute opération destructive passe par une confirmation explicite dans l'UI.
 - Appariement JPG+RAW : **même stem de nom de fichier** (ex. `P1230001.JPG` + `P1230001.RW2`). Extensions comparées sans casse (`.jpg` = `.JPG`).
@@ -85,12 +85,19 @@ Ces fichiers sont des symlinks vers `~/Source/agents-shared/` :
 ### Versions
 - Dernières versions stables disponibles par défaut (packages, outils, SDK) ; une version plus ancienne n'est retenue que sur exception justifiée et documentée. Règle transverse détaillée dans `DECISIONS.md` d'agents-shared (« Préférences d'outillage »).
 
+### Multi-plateforme (Linux + Windows)
+- Application, Core et tests doivent fonctionner sous Linux **et** Windows (macOS en plus si simple, sinon de côté — RC-03 fixe le périmètre pour la corbeille) ; CI en matrice `.github/workflows/tests.yml`.
+- Chemins : toujours `Path.Combine`/`Path.Join`, jamais de séparateur littéral — ni dans le code, ni dans les attendus de tests.
+- Fixtures de tests : noms portables — pas d'espaces en début/fin, pas de `< > : " / \ | ? *` (tronqués ou refusés par NTFS).
+- États dépendant de la casse (`P1.JPG` + `P1.jpg`, `raw` ≠ `RAW`) : sonde de capacité `isCaseSensitiveFileSystem` / `testCaseSensitiveOnly` (`tests/RawTandem.Core.Tests/TestHelpers.fs`), jamais un test d'OS ; leçon transverse dans `docs/ERREURS-GENERIC.md`.
+- Commandes externes : dispatch par plateforme dans le Core (modèle RC-03 `sendToTrash`).
+
 ### TDD
 - Approche par défaut pour les corrections et nouvelles fonctionnalités : écrire d'abord le test qui échoue, le voir échouer, puis corriger le code, puis revérifier (rouge/vert).
 - Chaque bug corrigé doit avoir son test de non-régression.
 
 ### Couverture de code (systématique)
-- **Règle générique : lire `docs/COVERAGE-GENERIC.md`** — quand toute la suite de tests est verte à la fin d'un changement, mesurer la couverture et rapporter les chiffres par assemblage **avec l'écart depuis la mesure précédente** ; l'historique vit dans `docs/COVERAGE.md` (une ligne par mesure, la dernière ligne est la référence).
+- **Règle générique : lire `docs/COVERAGE-GENERIC.md`** — quand toute la suite de tests est verte à la fin d'un changement, mesurer la couverture **sans qu'on le demande, avant de clore le changement** (un changement vert sans mesure n'est pas terminé) et rapporter les chiffres par assemblage **avec l'écart depuis la mesure précédente** ; les tests ignorés (skipped) comptent comme verts avec leur raison ; l'historique vit dans `docs/COVERAGE.md` (une ligne par mesure, la dernière ligne est la référence), la plateforme y est notée quand elle change et le delta se lit entre mesures de même plateforme.
 - Spécifique au projet : `dotnet test tests/RawTandem.Core.Tests --collect:"XPlat Code Coverage"` puis idem pour `tests/RawTandem.UI.Tests` (nettoyer d'abord les `TestResults/` pour ne fusionner que les runs du jour), rapports fusionnés via ReportGenerator dans `coveragereport/` (types `TextSummary;Html`), lecture dans `coveragereport/Summary.txt`. Plafond connu : App/Main/Program (wiring Avalonia) à 0 % en headless.
 
 ### DRY

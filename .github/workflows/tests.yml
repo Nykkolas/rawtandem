@@ -11,8 +11,14 @@ permissions:
 
 jobs:
   test:
-    name: Build, tests and code coverage
-    runs-on: ubuntu-latest
+    name: Tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Linux et Windows sont tous deux supportés (RC-03 : corbeille système
+        # multi-plateforme) ; chaque push doit être vert sur les deux.
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
 
     steps:
       - name: Checkout
@@ -24,8 +30,10 @@ jobs:
           dotnet-version: 10.0.x
 
       # gio (corbeille OS freedesktop) : les tests de suppression l'appellent
-      # réellement ; libglib2.0-bin fournit la commande.
+      # réellement ; libglib2.0-bin fournit la commande. Linux uniquement :
+      # sous Windows, RC-03 envoie à la corbeille via shell32.
       - name: Install gio for OS trash tests
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libglib2.0-bin
 
       - name: Run tests with code coverage
@@ -33,10 +41,15 @@ jobs:
           dotnet test
           --collect:"XPlat Code Coverage"
 
+      # Couverture et badges mesurés sous Linux uniquement : historique
+      # comparable (plafond headless déclaré dans docs/COVERAGE.md) et
+      # exécution stable des étapes git de publication des badges.
       - name: Install ReportGenerator
+        if: runner.os == 'Linux'
         run: dotnet tool install --global dotnet-reportgenerator-globaltool
 
       - name: Generate coverage report
+        if: runner.os == 'Linux'
         run: >-
           reportgenerator
           -reports:"tests/*/TestResults/*/coverage.cobertura.xml"
@@ -44,11 +57,13 @@ jobs:
           -reporttypes:"Html;TextSummary"
 
       - name: Show coverage summary
+        if: runner.os == 'Linux'
         run: cat coveragereport/Summary.txt
 
       # Badges séparés : Core (domaine pur), State (machine à états Elmish),
       # Avalonia (wiring App/Main/Program — attendu à 0 % en headless).
       - name: Generate coverage badges
+        if: runner.os == 'Linux'
         run: |
           reportgenerator -reports:"tests/RawTandem.Core.Tests/TestResults/*/coverage.cobertura.xml" -targetdir:badge-core -reporttypes:"Badges"
           reportgenerator -reports:"tests/RawTandem.UI.Tests/TestResults/*/coverage.cobertura.xml" -targetdir:badge-state -reporttypes:"Badges" -classfilters:"+RawTandem.UI.State"
@@ -58,6 +73,7 @@ jobs:
           sed -i 's/>Coverage</>Avalonia</g' badge-avalonia/badge_linecoverage.svg
 
       - name: Upload coverage artifacts
+        if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
           name: coverage
@@ -70,7 +86,7 @@ jobs:
       # Le badge SVG doit être hébergé pour être affiché dans le README ;
       # branche dédiée « badges », mise à jour seulement au push sur master.
       - name: Publish coverage badge
-        if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+        if: github.ref == 'refs/heads/master' && github.event_name == 'push' && runner.os == 'Linux'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
