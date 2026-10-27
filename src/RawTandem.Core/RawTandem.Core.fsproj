@@ -11,6 +11,11 @@
     <Compile Include="Organization.fs" />
     <Compile Include="Navigation.fs" />
     <Compile Include="Deletion.fs" />
+    <Compile Include="Exif.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MetadataExtractor" Version="2.9.3" />
   </ItemGroup>
 
 </Project>

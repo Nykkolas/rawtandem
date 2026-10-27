@@ -3,6 +3,7 @@ module RawTandem.UI.State
 open System
 open System.IO
 open Elmish
+open Avalonia
 open Avalonia.Media
 open Avalonia.Media.Imaging
 open RawTandem.Core.Constants
@@ -11,6 +12,7 @@ open RawTandem.Core.Tandems
 open RawTandem.Core.FolderScan
 open RawTandem.Core.Organization
 open RawTandem.Core.Deletion
+open RawTandem.Core.Exif
 
 // ========== Types ==========
 
@@ -124,6 +126,56 @@ let triableTandems (state: State) =
 [<Literal>]
 let private JpgDecodeWidth = 2048
 
+/// Matrice de transformation d'affichage (repère écran, y vers le bas) pour
+/// un bitmap de taille `size` (RC-04). La décomposition suit la norme EXIF :
+/// miroir horizontal d'abord, rotation ensuite (sens horaire).
+let private displayMatrix (transform: DisplayTransform) (size: Size) : Matrix =
+    let w, h = size.Width, size.Height
+
+    match transform with
+    | Identity -> Matrix.Identity
+    | MirrorHorizontal -> Matrix(-1.0, 0.0, 0.0, 1.0, w, 0.0)
+    | Rotate180 -> Matrix(-1.0, 0.0, 0.0, -1.0, w, h)
+    | MirrorVertical -> Matrix(1.0, 0.0, 0.0, -1.0, 0.0, h)
+    | MirrorHorizontalRotate270 -> Matrix(0.0, 1.0, 1.0, 0.0, 0.0, 0.0) // transposée
+    | Rotate90Clockwise -> Matrix(0.0, 1.0, -1.0, 0.0, h, 0.0)
+    | MirrorHorizontalRotate90 -> Matrix(0.0, -1.0, -1.0, 0.0, h, w) // anti-transposée
+    | Rotate270Clockwise -> Matrix(0.0, -1.0, 1.0, 0.0, 0.0, w)
+
+/// True si la transformation échange largeur et hauteur du bitmap.
+let private swapsDimensions (transform: DisplayTransform) =
+    match transform with
+    | Identity
+    | MirrorHorizontal
+    | Rotate180
+    | MirrorVertical -> false
+    | MirrorHorizontalRotate270
+    | Rotate90Clockwise
+    | MirrorHorizontalRotate90
+    | Rotate270Clockwise -> true
+
+/// Applique la transformation d'affichage EXIF au bitmap décodé (RC-04) :
+/// l'image **affichée** est orientée selon la photo, le fichier n'est jamais
+/// modifié. Identity : le bitmap passe tel quel, sans copie. Publiée pour
+/// être vérifiée pixel par pixel par les tests (sens des rotations, miroirs).
+let applyDisplayTransform (transform: DisplayTransform) (source: Bitmap) : Bitmap =
+    match transform with
+    | Identity -> source
+    | _ ->
+        let pw, ph = source.PixelSize.Width, source.PixelSize.Height
+        let targetSize = if swapsDimensions transform then PixelSize(ph, pw) else PixelSize(pw, ph)
+        // RenderTargetBitmap : cible bitmap avec DrawingContext (WriteableBitmap
+        // n'en a pas), même compte de pixels que le source, DPI préservé.
+        let target = new RenderTargetBitmap(targetSize, source.Dpi)
+
+        (
+            use context = target.CreateDrawingContext()
+            use pushedTransform = context.PushTransform(displayMatrix transform source.Size)
+            context.DrawImage(source, Rect(0.0, 0.0, source.Size.Width, source.Size.Height))
+        )
+
+        target :> Bitmap
+
 /// Tandem courant dans le tri (None si la liste est vide) : sert au stem et au
 /// nom de fichier exposés à la vue.
 let private currentTandem (state: State) =
@@ -139,6 +191,13 @@ let private currentStem (state: State) =
 /// trier-dossier-deja-organise étape 4). None si aucune photo n'est triable.
 let currentJpgFileName (state: State) =
     currentTandem state |> Option.map (fun tandem -> tandem.JpgFileName)
+
+/// Photo courante affichée à la verticale (mode portrait : plus haute que
+/// large, RC-04) ou non. Lit l'image réellement chargée pour l'affichage :
+/// la rotation EXIF doit se voir sur le bitmap décodé, pas seulement dans
+/// l'intention. None : aucune photo chargée.
+let currentJpgIsPortrait (state: State) =
+    state.CurrentJpg |> Option.map (fun image -> image.Size.Height > image.Size.Width)
 
 /// Libère la mémoire d'une image : un bitmap décodé n'attend pas le garbage
 /// collector, la navigation reste légère photo après photo.
@@ -159,8 +218,10 @@ let private isTriagingScreen (state: State) =
     | Confirming(Organizing, _) -> false
 
 /// Commande de chargement du JPG du tandem courant — jamais le RAW, trop
-/// lourd pour l'affichage. Décodage à largeur bornée, ratio préservé ; le
-/// dossier et le stem voyagent avec le résultat : un stem identique dans un
+/// lourd pour l'affichage. Décodage à largeur bornée, ratio préservé, puis
+/// rotation selon le tag EXIF Orientation (RC-04) : l'image stockée par
+/// l'appareil reste sur disque, seule l'image affichée est orientée.
+/// Le dossier et le stem voyagent avec le résultat : un stem identique dans un
 /// autre dossier est une autre photo, et un résultat du dossier précédent ne
 /// doit ni s'afficher ni écraser le bandeau du courant.
 let private loadCurrentJpgCmd (state: State) : Cmd<Msg> =
@@ -173,7 +234,12 @@ let private loadCurrentJpgCmd (state: State) : Cmd<Msg> =
             (fun () -> async {
                 use stream = File.OpenRead(path)
                 let bitmap = Bitmap.DecodeToWidth(stream, JpgDecodeWidth, BitmapInterpolationMode.HighQuality)
-                return JpgLoaded(folder, stem, bitmap :> IImage)
+                let oriented =
+                    match readDisplayTransform path with
+                    | Some transform -> applyDisplayTransform transform bitmap
+                    | None -> bitmap
+
+                return JpgLoaded(folder, stem, oriented :> IImage)
             })
             ()
             id

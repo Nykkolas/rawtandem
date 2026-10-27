@@ -13,6 +13,7 @@
     <Compile Include="FolderScanTests.fs" />
     <Compile Include="OrganizationTests.fs" />
     <Compile Include="DeletionTests.fs" />
+    <Compile Include="ExifTests.fs" />
     <Compile Include="NavigationTests.fs" />
   </ItemGroup>
 

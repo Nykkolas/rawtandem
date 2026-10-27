@@ -2,11 +2,52 @@ module RawTandem.UI.ScenarioTests
 
 open System
 open System.IO
+open System.Runtime.InteropServices
 open System.Threading
 open Expecto
 open Elmish
+open Avalonia
+open Avalonia.FuncUI.Hosts
+open Avalonia.Headless
+open Avalonia.Media.Imaging
+open SkiaSharp
 open RawTandem.Core.Constants
+open RawTandem.Core.Exif
 open RawTandem.UI.State
+
+/// Point d'entrée de la session headless : un type avec BuildAvaloniaApp,
+/// pour piloter le builder nous-mêmes. UseHeadlessDrawing = false : le mode
+/// stub (vrai par défaut) rend du noir — Skia rend de vrais pixels.
+type TestAppBuilder() =
+    static member BuildAvaloniaApp() : AppBuilder =
+        AppBuilder
+            .Configure<App.App>()
+            .UseSkia()
+            .UseHeadless(AvaloniaHeadlessPlatformOptions(ShouldRenderOnUIThread = true, UseHeadlessDrawing = false))
+
+/// Session headless unique du projet de tests (thread UI dédié qui pompe,
+/// jamais disposée : le processus de test la vit jusqu'au bout).
+/// - son initialisation enregistre Skia dans le processus : le décodage des
+///   JPG dans `loadCurrentJpgCmd` fonctionne depuis n'importe quel thread —
+///   sans elle, il lève (« No runtime platform services configured ») et
+///   aucune photo ne se charge jamais ;
+/// - les tests de rendu (RC-04) y dispatchent leurs actions sur le thread UI
+///   (sinon, deadlock : le dispatcher ne pompe pas depuis les threads de
+///   test).
+/// Créée à l'initialisation de ce module (découverte des tests, avant tout
+/// test), comme le faisait l'ancien SetupWithoutStarting.
+let private headlessSession =
+    // Isolation PerAssembly (partagée) : les services Avalonia restent
+    // enregistrés pour tout le processus. L'isolation PerTest (défaut) les
+    // jetterait dans un scope de locator après chaque Dispatch — le décodage
+    // des scénarios ne trouverait plus Skia.
+    HeadlessUnitTestSession.StartNew(typeof<TestAppBuilder>, AvaloniaTestIsolationLevel.PerAssembly)
+
+// L'initialisation d'Avalonia est différée au premier Dispatch
+// (EnsureSharedApplication) : on la force tout de suite, sinon les scénarios
+// qui décodent des JPG sans passer par la session tourneraient sans Skia
+// enregistré (« Unable to locate IPlatformRenderInterface »).
+headlessSession.Dispatch(Action ignore, CancellationToken.None).Wait()
 
 /// Pas de scénario : traite un message utilisateur, puis exécute les
 /// commandes que `update` planifie — le rôle du runtime Elmish — et renvoie
@@ -99,6 +140,175 @@ let private withPhotos (run: string -> unit) =
         run folder
     finally
         Directory.Delete(folder, true)
+
+/// Segment APP1 « Exif » minimal ne portant que le tag Orientation (RC-04),
+/// inséré dans un JPEG encodé : en-tête "Exif\0\0", TIFF petit-boutiste (II),
+/// IFD d'une entrée (tag 0x0112, type SHORT, count 1, valeur `value`).
+let private exifOrientationSegment (value: byte) : byte[] =
+    let payload =
+        // "Exif\0\0" : en F#, \0 n'est pas une séquence d'échappement (il
+        // deviendrait backslash + '0' littéraux) — octets explicites.
+        [| yield! [| 0x45uy; 0x78uy; 0x69uy; 0x66uy; 0x00uy; 0x00uy |]
+           yield! [| 0x49uy; 0x49uy |] // II (petit-boutiste)
+           yield! [| 0x2Auy; 0x00uy |] // marqueur TIFF 42
+           yield! [| 0x08uy; 0x00uy; 0x00uy; 0x00uy |] // IFD0 à l'octet 8
+           yield! [| 0x01uy; 0x00uy |] // une entrée
+           yield! [| 0x12uy; 0x01uy |] // tag 0x0112 Orientation
+           yield! [| 0x03uy; 0x00uy |] // type SHORT
+           yield! [| 0x01uy; 0x00uy; 0x00uy; 0x00uy |] // count 1
+           yield! [| value; 0x00uy; 0x00uy; 0x00uy |] |] // valeur, alignée à gauche
+
+    let nextIfdOffset = [| 0x00uy; 0x00uy; 0x00uy; 0x00uy |] // pas d'IFD suivante
+    let body = Array.append payload nextIfdOffset
+    let length = 2 + body.Length // le champ longueur se compte lui-même
+
+    Array.append [| 0xFFuy; 0xE1uy; byte (length >>> 8); byte (length &&& 0xFF) |] body
+
+/// Position d'insertion du segment APP1 : après le SOI et l'éventuel APP0
+/// (JFIF) — l'ordre APP0 puis APP1 est la convention EXIF 2.2.
+let private app1InsertPosition (jpg: byte[]) =
+    if jpg.Length > 5 && jpg.[2] = 0xFFuy && jpg.[3] = 0xE0uy then
+        2 + 2 + (int jpg.[4] * 256 + int jpg.[5]) // fin du segment APP0
+    else
+        2 // juste après le SOI
+
+/// Fixture RC-04 : un JPG **paysage** (320×240, largeur > hauteur) à motif
+/// orienté, encodé par Skia, accompagné ou non du tag EXIF Orientation. Le
+/// quart haut-gauche est rouge (Firebrick), le reste bleu (RoyalBlue) : seule
+/// la métadonnée dit comment afficher la photo — exactement le fichier que
+/// produit un appareil photo tenu à la verticale (tag 6 : le capteur stocke
+/// en paysage, l'EXIF dit « à afficher en portrait, quart de tour horaire »).
+/// Le motif rend le **sens** de la rotation observable dans les pixels : une
+/// simple comparaison hauteur/largeur ne distinguerait pas une rotation juste
+/// d'une rotation à l'envers, ni ne verrait jamais un miroir.
+let private landscapeJpeg (exifOrientation: byte option) : byte[] =
+    let info = SKImageInfo(320, 240, SKColorType.Bgra8888)
+    use surface = SKSurface.Create(info)
+    let canvas = surface.Canvas
+    canvas.Clear(SKColors.RoyalBlue)
+
+    use paint = new SKPaint(Color = SKColors.Firebrick)
+    canvas.DrawRect(SKRect.Create(0.0f, 0.0f, 160.0f, 120.0f), paint)
+
+    use image = surface.Snapshot()
+    use data = image.Encode(SKEncodedImageFormat.Jpeg, 90)
+    let jpg = data.ToArray()
+
+    match exifOrientation with
+    | None -> jpg
+    | Some value ->
+        let at = app1InsertPosition jpg
+        let segment = exifOrientationSegment value
+        Array.concat [ jpg.[0 .. at - 1]; segment; jpg.[at ..] ]
+
+/// Préconditions de la règle RC-04 : dossier « Verticales » organisé (JPG à la
+/// racine, RW2 dans RAW/), 2 couples. P1 : JPG paysage sans EXIF. P2 : JPG
+/// paysage avec EXIF Orientation 6 (photo « prise à la verticale »). Déchets
+/// de test recréés à chaque lancement, détruits en finally.
+let private withVerticales (run: string -> unit) =
+    // Dossier unique : Expecto exécute les tests en parallèle, deux scénarios
+    // ne doivent pas partager leurs déchets.
+    let folder = Path.Combine(Path.GetTempPath(), sprintf "rawtandem-scenario-Verticales-%s" (Guid.NewGuid().ToString("N")))
+
+    if Directory.Exists folder then Directory.Delete(folder, true)
+
+    Directory.CreateDirectory folder |> ignore
+
+    let rawDir = Path.Combine(folder, RawSubfolderName)
+    Directory.CreateDirectory rawDir |> ignore
+
+    File.WriteAllBytes(Path.Combine(folder, "P1.JPG"), landscapeJpeg None)
+    File.WriteAllBytes(Path.Combine(folder, "P2.JPG"), landscapeJpeg (Some 6uy))
+    File.WriteAllText(Path.Combine(rawDir, "P1.RW2"), "")
+    File.WriteAllText(Path.Combine(rawDir, "P2.RW2"), "")
+
+    try
+        run folder
+    finally
+        Directory.Delete(folder, true)
+
+/// Boîte englobante (largeur, hauteur) en pixels de la photo rendue à
+/// Photo rendue par la vraie vue : dimensions de la zone photo à l'écran et
+/// position relative (0..1) du centre du quart rouge de la fixture. L'aspect
+/// seul ne prouverait que « un quart de tour a été appliqué » ; le motif
+/// orienté prouve aussi que c'est le **bon** sens (et verrouille l'identité :
+/// pas de rotation du tout sans EXIF).
+type private RenderedPhoto =
+    { Width: float
+      Height: float
+      RedCenterX: float
+      RedCenterY: float }
+
+/// Rend la vraie vue de l'application (Main.view) pour l'état donné et
+/// analyse les pixels de la photo de fixture affichée : zone occupée à
+/// l'écran et position du quart rouge (Firebrick 178,34,34) dans la photo
+/// (reste RoyalBlue 65,105,225 ; tolérance pour la compression JPEG et les
+/// arrondis de rendu). La vue est matérialisée par HostControl (FuncUI, sans
+/// fenêtre ni Program Elmish), rendue par Skia dans un RenderTargetBitmap
+/// sur le thread UI de la session headless. None : aucune photo rendue.
+let private renderPhoto (state: State) : RenderedPhoto option =
+    headlessSession
+        .Dispatch(
+            Func<RenderedPhoto option>(fun () ->
+                let host = HostControl()
+                (host :> IViewHost).Update(Some(Main.view state ignore))
+
+                // HostControl est un ContentControl : sans thème, il n'a pas de
+                // template et n'attache jamais son contenu à l'arbre visuel —
+                // on rend donc directement la racine que le patcher a posée.
+                let root = host.Content :?> Avalonia.Controls.Control
+                root.Measure(Size(900.0, 640.0))
+                root.Arrange(Rect(0.0, 0.0, 900.0, 640.0))
+
+                use target = new RenderTargetBitmap(PixelSize(900, 640), Vector(96.0, 96.0))
+                target.Render root
+
+                let w, h = 900, 640
+                let size = w * h * 4
+                let ptr = Marshal.AllocHGlobal size
+                target.CopyPixels(PixelRect(0, 0, w, h), ptr, size, w * 4)
+
+                let buffer = Array.create size 0uy
+                Marshal.Copy(ptr, buffer, 0, size)
+                Marshal.FreeHGlobal ptr
+
+                let mutable photoMinX, photoMinY, photoMaxX, photoMaxY = Int32.MaxValue, Int32.MaxValue, Int32.MinValue, Int32.MinValue
+                let mutable redMinX, redMinY, redMaxX, redMaxY = Int32.MaxValue, Int32.MaxValue, Int32.MinValue, Int32.MinValue
+                let mutable found = false
+
+                for y = 0 to h - 1 do
+                    for x = 0 to w - 1 do
+                        let i = (y * w + x) * 4
+                        // BGRA. Fixture : quart rouge Firebrick, reste RoyalBlue.
+                        let b, g, r = int buffer.[i], int buffer.[i + 1], int buffer.[i + 2]
+                        let isRed = abs (r - 178) <= 25 && abs (g - 34) <= 25 && abs (b - 34) <= 25
+                        let isBlue = abs (r - 65) <= 25 && abs (g - 105) <= 25 && abs (b - 225) <= 25
+
+                        if isRed then
+                            found <- true
+                            redMinX <- min redMinX x; redMaxX <- max redMaxX x
+                            redMinY <- min redMinY y; redMaxY <- max redMaxY y
+
+                        if isRed || isBlue then
+                            photoMinX <- min photoMinX x; photoMaxX <- max photoMaxX x
+                            photoMinY <- min photoMinY y; photoMaxY <- max photoMaxY y
+
+                if found then
+                    let photoWidth = float (photoMaxX - photoMinX + 1)
+                    let photoHeight = float (photoMaxY - photoMinY + 1)
+
+                    // Position relative du centre du quart rouge dans la photo.
+                    Some
+                        { Width = photoWidth
+                          Height = photoHeight
+                          RedCenterX = (float (redMinX + redMaxX) / 2.0 - float photoMinX) / photoWidth
+                          RedCenterY = (float (redMinY + redMaxY) / 2.0 - float photoMinY) / photoHeight }
+                else
+                    None),
+            CancellationToken.None
+        )
+        .GetAwaiter()
+        .GetResult()
 
 /// Scénario exécutable de docs/usecases/organiser-et-trier-dossier.md.
 ///
@@ -326,4 +536,166 @@ let scenarioTests =
                 let sFull = init () |> fst |> step (FolderSelected photos) |> step FullscreenRequested
                 let sDeletedFull = sFull |> step DeleteTandemRequested |> step DeleteTandemConfirmed
                 Expect.equal sDeletedFull.Status "" "en plein écran, le statut est éphémère")
+        }
+
+        /// Scénario exécutable de docs/usecases/regles-communes.md, règle RC-04 :
+        /// le JPG affiché est tourné selon son tag EXIF Orientation. Coverage
+        /// générique : un seul test pour toutes les vues affichant une photo.
+        ///
+        /// Deux niveaux d'observation, l'un ne pouvant pas mentir pour l'autre :
+        /// - machine : `currentJpgIsPortrait` lit le bitmap réellement décodé
+        ///   (`CurrentJpg`) — la rotation doit se voir sur le bitmap, pas
+        ///   seulement dans l'intention ;
+        /// - rendu : la vraie vue de l'application (`Main.view`), matérialisée
+        ///   par HostControl et rendue par Skia en headless, est vérifiée
+        ///   pixel par pixel. La fixture est un motif orienté (quart
+        ///   haut-gauche rouge) : le test vérifie le SENS de la rotation, pas
+        ///   seulement l'aspect — une rotation à l'envers ou un miroir
+        ///   parasite échouerait ici alors que l'aspect resterait correct.
+        ///   Ce niveau couvre le mapping vue (`Image.source`) — plafond
+        ///   headless levé pour l'affichage de la photo. Les tags miroirs
+        ///   (2, 4, 5, 7) restent couverts par les tests unitaires miroir de
+        ///   la fonction pure de mapping tag → transformation.
+        /// La fixture fabrique de vrais JPG (Skia en headless) : P1 sans EXIF,
+        /// P2 avec le tag 6 (capteur paysage, affichage portrait) — c'est le
+        /// fichier que produit un appareil photo tenu à la verticale. Le
+        /// sélecteur natif de dossier reste non testé.
+        test "RC-04 common rule : EXIF-oriented photos display upright" {
+            withVerticales (fun folder ->
+                // Précondition RC-04 : vue de tri, photo courante P1 (paysage,
+                // sans EXIF). Le dossier organisé est trié directement.
+                let s = init () |> fst |> step (FolderSelected folder)
+                Expect.equal s.Screen (Working Triaging) "la vue de tri est affichée"
+                Expect.equal (currentJpgFileName s) (Some "P1.JPG") "photo courante P1"
+
+                // RC-04 : sans tag EXIF, aucune rotation — le paysage reste
+                // paysage et le motif reste dans son coin d'origine. Cette
+                // identité verrouille aussi l'absence de rotation parasite
+                // (180°, miroir) sur un fichier sans métadonnée.
+                Expect.equal (currentJpgIsPortrait s) (Some false) "sans EXIF, la photo décodée reste horizontale"
+
+                match renderPhoto s with
+                | Some photo ->
+                    Expect.isGreaterThan photo.Width photo.Height "sans EXIF, la photo rendue à l'écran reste horizontale"
+                    Expect.isLessThan photo.RedCenterX 0.5 "sans EXIF, le quart rouge du motif reste à gauche : aucune rotation"
+                    Expect.isLessThan photo.RedCenterY 0.5 "sans EXIF, le quart rouge du motif reste en haut : aucune rotation"
+                | None -> failtest "la photo P1 n'est pas rendue (pipeline de rendu headless cassé ?)"
+
+                // RC-04 : photo suivante, P2 — même cliché paysage, tag
+                // Orientation 6 : l'appareil était tenu à la verticale.
+                let s2 = s |> step NextClicked
+                Expect.equal (currentJpgFileName s2) (Some "P2.JPG") "photo courante P2"
+
+                // RC-04 observable effect : la photo prise à la verticale
+                // s'affiche à la verticale — bitmap décodé et pixels rendus.
+                Expect.equal (currentJpgIsPortrait s2) (Some true) "avec le tag EXIF Orientation 6, la photo décodée est verticale"
+
+                // Le tag 6 impose un quart de tour HORAIRE : le quart rouge
+                // (haut-gauche du capteur) doit se retrouver en haut-droite.
+                // Le sens est vérifié par pixels : une rotation dans l'autre
+                // sens afficherait une photo verticale… mais couchée.
+                match renderPhoto s2 with
+                | Some photo ->
+                    Expect.isGreaterThan photo.Height photo.Width "avec le tag EXIF Orientation 6, la photo rendue à l'écran est verticale"
+                    Expect.isGreaterThan photo.RedCenterX 0.5 "tag 6 : le quart rouge est rendu en haut à DROITE (quart de tour horaire)"
+                    Expect.isLessThan photo.RedCenterY 0.5 "tag 6 : le quart rouge est rendu EN HAUT (quart de tour horaire)"
+                | None -> failtest "la photo P2 n'est pas rendue (pipeline de rendu headless cassé ?)")
+        }
+
+        /// RC-04, niveau unitaire pixels : les 8 transformations EXIF déplacent
+        /// les pixels exactement comme la norme le prescrit. La fixture est
+        /// un bitmap 4×2 à quatre quadrants (haut-gauche rouge, haut-droite
+        /// bleu, bas-gauche vert, bas-droite jaune) : on lit la position du
+        /// rouge et du bleu après transformation et les dimensions du résultat
+        /// — le SENS de chaque rotation et chaque miroir est ainsi vérifié,
+        /// pas seulement l'aspect. Le scénario E2E ci-dessus couvre le tag 6
+        /// de bout en bout ; ce test couvre les 8 valeurs au niveau pixels.
+        test "RC-04 unit : the 8 EXIF display transforms move pixels as the norm prescribes" {
+            let sourceBitmap () : Bitmap =
+                let bmp = new WriteableBitmap(PixelSize(4, 2), Vector(96.0, 96.0))
+
+                (
+                    use fb = bmp.Lock()
+
+                    let setPixel (x: int) (y: int) (r, g, b) =
+                        Marshal.WriteInt32(
+                            fb.Address + nativeint (y * fb.RowBytes + x * 4),
+                            (255 <<< 24) ||| (r <<< 16) ||| (g <<< 8) ||| b
+                        )
+
+                    for y = 0 to 1 do
+                        for x = 0 to 3 do
+                            let color =
+                                if x < 2 && y = 0 then (255, 0, 0) // haut-gauche rouge
+                                elif x >= 2 && y = 0 then (0, 0, 255) // haut-droite bleu
+                                elif x < 2 then (0, 255, 0) // bas-gauche vert
+                                else (255, 255, 0) // bas-droite jaune
+
+                            setPixel x y color
+                )
+
+                bmp :> Bitmap
+
+            // Pour chaque tag : quadrant d'arrivée du rouge (haut-gauche au
+            // départ) puis du bleu (haut-droite au départ), et dimensions
+            // échangées ou non (source 4×2).
+            let expectations : (DisplayTransform * string * string * bool) list =
+                [ Identity, "LT", "RT", false
+                  MirrorHorizontal, "RT", "LT", false
+                  Rotate180, "RB", "LB", false
+                  MirrorVertical, "LB", "RB", false
+                  MirrorHorizontalRotate270, "LT", "LB", true
+                  Rotate90Clockwise, "RT", "RB", true
+                  MirrorHorizontalRotate90, "RB", "RT", true
+                  Rotate270Clockwise, "LB", "LT", true ]
+
+            for transform, expectedRed, expectedBlue, swaps in expectations do
+                let source = sourceBitmap ()
+                let result = applyDisplayTransform transform source
+                let w, h = result.PixelSize.Width, result.PixelSize.Height
+                let expectedSize = if swaps then (2, 4) else (4, 2)
+                Expect.equal (w, h) expectedSize (sprintf "%A : dimensions du résultat" transform)
+
+                // Lecture des pixels (BGRA) et localisation du rouge et du bleu
+                // (tolérance large : les bords interpolés ne comptent pas,
+                // seul le quadrant du centre de la masse compte).
+                let size = w * h * 4
+                let ptr = Marshal.AllocHGlobal size
+                result.CopyPixels(PixelRect(0, 0, w, h), ptr, size, w * 4)
+                let buffer = Array.create size 0uy
+                Marshal.Copy(ptr, buffer, 0, size)
+                Marshal.FreeHGlobal ptr
+
+                let massCenter (r0, g0, b0) =
+                    let mutable minX, minY, maxX, maxY = Int32.MaxValue, Int32.MaxValue, Int32.MinValue, Int32.MinValue
+                    let mutable found = false
+
+                    for y = 0 to h - 1 do
+                        for x = 0 to w - 1 do
+                            let i = (y * w + x) * 4
+                            let b, g, r = int buffer.[i], int buffer.[i + 1], int buffer.[i + 2]
+
+                            if abs (r - r0) <= 60 && abs (g - g0) <= 60 && abs (b - b0) <= 60 then
+                                found <- true
+                                minX <- min minX x
+                                minY <- min minY y
+                                maxX <- max maxX x
+                                maxY <- max maxY y
+
+                    if found then
+                        let cx = (minX + maxX) / 2
+                        let cy = (minY + maxY) / 2
+
+                        (if cx < w / 2 then "L" else "R")
+                        + (if cy < h / 2 then "T" else "B")
+                    else
+                        "?"
+
+                Expect.equal (massCenter (255, 0, 0)) expectedRed (sprintf "%A : quadrant du rouge" transform)
+                Expect.equal (massCenter (0, 0, 255)) expectedBlue (sprintf "%A : quadrant du bleu" transform)
+
+                result.Dispose()
+
+                if not (Object.ReferenceEquals(source, result)) then
+                    source.Dispose()
         } ]
