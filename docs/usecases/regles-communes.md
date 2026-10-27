@@ -2,8 +2,18 @@
 
 Règles transversales applicables à plusieurs UC. Elles ne se répètent pas
 dans les scénarios : un UC qui s'en réclame les référence dans son contexte
-(`règles communes: RC-01, RC-02`) ou inline à une ou des étape(s) particulière(s). 
-Dans certains cas, la couverture sera faite de façon générique, parfois par instance. L'étiquette "coverage" le précisera. Si rien n'est écrit, par défaut c'est par instance
+(`règles communes: RC-01, RC-02`) ou inline à une ou des étape(s) particulière(s).
+
+Leur couverture vit dans `tests/RawTandem.UI.Tests/ScenarioTests.fs` :
+- ***coverage: générique*** : la règle a son propre test E2E dédié, valable pour
+  toutes les vues/UC qui s'en réclament. Il est écrit à la validation de la règle
+  (rouge pour la bonne raison s'il y a du nouveau), relu par l'utilisateur avant
+  l'implémentation.
+- ***coverage: instancié*** : la règle est couverte par les tests de scénario des
+  UC qui la référencent ; pas de test dédié. À la validation de la règle, vérifier
+  que ces tests l'exercent ; sinon, l'UC gagne l'étape/extension qui l'exerce, ou
+  la règle passe en `générique`.
+- Si rien n'est écrit, par défaut c'est `instancié`.
 
 ## RC-01 Interactions dans les vues de tri
 ***applies to:*** toute vue affichant une liste de photos (vues de tri)
@@ -35,12 +45,23 @@ Dans certains cas, la couverture sera faite de façon générique, parfois par i
 ## RC-02 Confirmation des actions destructives
 ***applies to:*** toute action envoyant des fichiers vers la corbeille
 
-***rule:*** aucune corbeille sans écran de confirmation listant les fichiers concernés 
+***rule:*** aucun envoi vers la corbeille sans écran de confirmation listant les fichiers concernés 
 
 ***observable effect:***
 - l'utilisateur a la possibilité d'accepter ou refuser. 
 - S'il accepte l'action est exécutée
 - S'il refuse, rien n'est fait
 - Dans tous les cas, un rappel de son choix est affiché dans la barre de statut en bas
+
+***coverage:*** instancié
+
+## RC-03 Corbeille système multi-plateforme 
+***applies to:*** Toute suppression de fichier de l'application
+
+***rule:*** 
+- Les fichiers ne sont pas réellement supprimés, ils sont déplacés vers la corbeille système, que ce soit sous Linux ou sous Windows
+- L'implémentation pour MacOS est hors scope pour le moment
+
+***observable effect:*** Les fichiers ne sont plus dans le répertoire de départ et sont récupérables dans la corbeille système
 
 ***coverage:*** instancié
