@@ -37,20 +37,20 @@ let renderPng (size: int) : byte[] =
     canvas.Scale(float32 size / 512.f)
 
     // Tuile khaki arrondie (22 %) — style iPhone.
-    let tile = SKRoundRect()
+    let tile = new SKRoundRect()
     tile.SetRect(SKRect.Create(0.f, 0.f, 512.f, 512.f), 512.f * 0.22f, 512.f * 0.22f)
     use tilePaint = new SKPaint(Color = Khaki, IsAntialias = true)
     canvas.DrawRoundRect(tile, tilePaint)
 
     // L'encadrement derrière (RAW) : carte en contour.
     use stroke = new SKPaint(Color = Night, Style = SKPaintStyle.Stroke, StrokeWidth = 24.f, IsAntialias = true)
-    let back = SKRoundRect()
+    let back = new SKRoundRect()
     back.SetRect(SKRect.Create(81.f, 121.f, 240.f, 190.f), 28.f, 28.f)
     canvas.DrawRoundRect(back, stroke)
 
     // La photo devant (JPG) : carte pleine.
     use fill = new SKPaint(Color = Night, IsAntialias = true)
-    let front = SKRoundRect()
+    let front = new SKRoundRect()
     front.SetRect(SKRect.Create(191.f, 201.f, 240.f, 190.f), 28.f, 28.f)
     canvas.DrawRoundRect(front, fill)
 
