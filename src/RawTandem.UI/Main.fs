@@ -515,7 +515,7 @@ let view (state: State) (dispatch: Msg -> unit) =
             // le dernier enfant est rendu au-dessus des précédents : photo,
             // puis bandeau, puis statut.
             let children =
-                [ fullscreenPhotoView state dispatch :> Types.IView ]
+                [ fullscreenPhotoView state dispatch ]
                 @ confirmation
                 @ (if state.Status = "" then [] else [ statusView state ])
 
