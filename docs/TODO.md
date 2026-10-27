@@ -53,6 +53,7 @@ Cases à cocher en Markdown : `[ ]` → `[x]` (cliquable aussi dans l'UI web Git
 - [ ] Gestion des orphelins (JPG sans RAW, RAW sans JPG) : pour l'instant les orphelins sont signalés en rouge (nom seul) dans le résumé d'organisation et pris en compte par l'arbre de décision ; aller plus loin : action au fichier seul, affichage dédié dans le tri
 - [x] Workflow CI : build + tests + couverture au push (GitHub Actions `.github/workflows/tests.yml`, rapport en artifact, badges de couverture séparés Core / State / wiring Avalonia publiés sur la branche `badges`, affichés dans le README)
 - [ ] Publication de binaires en GitHub Release au push d'un tag (workflow de release, voir section « Crée une version x.y.z » d'AGENTS.md)
+- [ ] Icône d'apllication
 
 ## Documentation
 

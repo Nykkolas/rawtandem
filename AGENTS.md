@@ -41,6 +41,7 @@ Ces fichiers sont des symlinks vers `~/Source/agents-shared/` :
 
 - **F# / Elmish** : lire `docs/FSHARP.md` avant d'écrire ou de modifier du F# (pattern Elmish, commandes async, design with types, aléatoire/crypto, casing, tests).
 - **Avalonia.FuncUI** : lire `docs/AVALONIA.md` avant de toucher l'UI (DSL, types géométriques, contrôles, feedback, clipboard, fenêtre).
+- **UX/UI par défaut** : `docs/UX-GENERIC.md` (conventions de plateforme, groupement fonctionnel, proximité, cibles Fitts, icônes + infobulles, feedback d'attente) — appliquées par défaut à toute vue, la spec restant maîtresse en cas de conflit.
 - **Audit générique** : `docs/AUDIT-GENERIC.md`, complété par la checklist locale `docs/AUDIT.md`.
 - **Spec = UC** : `docs/SPEC-UC.md`, workflow de spécification par use cases (la boucle complète y vit).
 - **Couverture de code** : `docs/COVERAGE-GENERIC.md` (mesure systématique quand tout est vert, écart rapporté depuis la mesure précédente).

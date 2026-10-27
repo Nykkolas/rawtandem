@@ -374,8 +374,9 @@ let private triagingView (state: State) (dispatch: Msg -> unit) =
 
     DockPanel.create [
         DockPanel.children [
-            // Barre du haut : « Ouvrir un autre dossier… » à gauche, bascule
-            // plein écran à droite (RC-01 : même geste que F/F11/double-clic).
+            // Barre du haut : actions de dossier uniquement (UX-GENERIC :
+            // groupement fonctionnel — la bascule plein écran, action de vue,
+            // vit avec les actions photo, en bande du bas).
             DockPanel.create [
                 DockPanel.dock Dock.Top
                 DockPanel.children [
@@ -385,13 +386,6 @@ let private triagingView (state: State) (dispatch: Msg -> unit) =
                         Button.isEnabled (canOpenAnotherFolder state)
                         Button.onClick (fun args -> pickFolder args.Source dispatch |> Async.StartImmediate)
                         Button.content "Ouvrir un autre dossier…"
-                    ]
-                    Button.create [
-                        Button.dock Dock.Right
-                        Button.margin (Thickness(0.0, 12.0, 20.0, 0.0))
-                        Button.padding (Thickness(10.0))
-                        Button.onClick (fun _ -> dispatch FullscreenRequested)
-                        Button.content fullscreenIcon
                     ]
                 ]
             ]
@@ -416,16 +410,39 @@ let private triagingView (state: State) (dispatch: Msg -> unit) =
                     ]
                 ]
             ]
-            Button.create [
-                Button.dock Dock.Bottom
-                Button.content "Supprimer le tandem"
-                Button.foreground Brushes.Red
-                Button.fontSize 16.0
-                Button.padding (Thickness(16.0, 8.0))
-                Button.horizontalAlignment HorizontalAlignment.Center
-                Button.margin (Thickness(0.0, 0.0, 0.0, 12.0))
-                Button.isEnabled (photoCount > 0)
-                Button.onClick (fun _ -> dispatch DeleteTandemRequested)
+            // Bande du bas : les actions sur la photo affichée (UX-GENERIC :
+            // groupement fonctionnel). La suppression, destructive, reste au
+            // centre, isolée ; la bascule plein écran vit au coin bas-droit
+            // (cible Fitts, même geste que F/F11/double-clic, RC-01), à
+            // l'opposé du bouton destructif. Les deux partagent la même
+            // bande médiane et la même marge de 12 px.
+            Grid.create [
+                Grid.dock Dock.Bottom
+                Grid.columnDefinitions "*,Auto,*"
+                Grid.children [
+                    Button.create [
+                        Grid.column 1
+                        Button.verticalAlignment VerticalAlignment.Center
+                        Button.content "Supprimer le tandem"
+                        Button.tip "Supprimer le tandem (Suppr)"
+                        Button.foreground Brushes.Red
+                        Button.fontSize 16.0
+                        Button.padding (Thickness(16.0, 8.0))
+                        Button.margin (Thickness(0.0, 0.0, 0.0, 12.0))
+                        Button.isEnabled (photoCount > 0)
+                        Button.onClick (fun _ -> dispatch DeleteTandemRequested)
+                    ]
+                    Button.create [
+                        Grid.column 2
+                        Button.horizontalAlignment HorizontalAlignment.Right
+                        Button.verticalAlignment VerticalAlignment.Center
+                        Button.margin (Thickness(0.0, 0.0, 20.0, 12.0))
+                        Button.padding (Thickness(10.0))
+                        Button.tip "Plein écran (F)"
+                        Button.onClick (fun _ -> dispatch FullscreenRequested)
+                        Button.content fullscreenIcon
+                    ]
+                ]
             ]
             // Navigation flanquante : les gestes les plus fréquents aux bords
             // de la photo, loin du bouton destructif.
@@ -435,6 +452,7 @@ let private triagingView (state: State) (dispatch: Msg -> unit) =
                 Button.margin (Thickness(20.0, 0.0, 0.0, 0.0))
                 Button.fontSize 22.0
                 Button.content "◄"
+                Button.tip "Photo précédente (←)"
                 Button.isEnabled (state.CurrentIndex > 0)
                 Button.onClick (fun _ -> dispatch PreviousClicked)
             ]
@@ -444,6 +462,7 @@ let private triagingView (state: State) (dispatch: Msg -> unit) =
                 Button.margin (Thickness(0.0, 0.0, 20.0, 0.0))
                 Button.fontSize 22.0
                 Button.content "►"
+                Button.tip "Photo suivante (→)"
                 Button.isEnabled (state.CurrentIndex < photoCount - 1)
                 Button.onClick (fun _ -> dispatch NextClicked)
             ]
