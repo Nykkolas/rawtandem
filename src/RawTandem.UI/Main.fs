@@ -8,7 +8,9 @@ open Avalonia.Input
 open Avalonia.Interactivity
 open Avalonia.Layout
 open Avalonia.Media
+open Avalonia.Media.Imaging
 open Avalonia.Platform.Storage
+open Avalonia.Platform
 open Avalonia.FuncUI
 open Avalonia.FuncUI.DSL
 open Avalonia.FuncUI.Hosts
@@ -618,6 +620,10 @@ type MainWindow() as this =
         base.Width <- 900.0
         base.Height <- 640.0
         base.WindowStartupLocation <- WindowStartupLocation.CenterScreen
+        // Icône de la fenêtre — c'est elle que le gestionnaire de fenêtres
+        // affiche dans la barre des tâches sous Linux ; l'exe Windows porte
+        // la sienne via `<ApplicationIcon>`.
+        base.Icon <- WindowIcon(new Bitmap(AssetLoader.Open(Uri("avares://RawTandem.UI/Assets/icon.png"))))
 
         Program.mkProgram init update view
         |> Program.withSubscription (fun state -> keyboardSubscriptions this state @ windowStateSubscriptions this state)

@@ -5,7 +5,14 @@
     <OutputType>Exe</OutputType>
     <UseAvalonia>true</UseAvalonia>
     <AvaloniaUseCompactAssembly>false</AvaloniaUseCompactAssembly>
+    <!-- Icône de l'exe (Windows) ; la fenêtre charge Assets/icon.png au
+         runtime (barre des tâches sous Linux), voir MainWindow. -->
+    <ApplicationIcon>Assets\icon.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <AvaloniaResource Include="Assets\icon.png" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="12.1.0" />

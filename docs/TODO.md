@@ -53,7 +53,7 @@ Cases à cocher en Markdown : `[ ]` → `[x]` (cliquable aussi dans l'UI web Git
 - [ ] Gestion des orphelins (JPG sans RAW, RAW sans JPG) : pour l'instant les orphelins sont signalés en rouge (nom seul) dans le résumé d'organisation et pris en compte par l'arbre de décision ; aller plus loin : action au fichier seul, affichage dédié dans le tri
 - [x] Workflow CI : build + tests + couverture au push (GitHub Actions `.github/workflows/tests.yml`, rapport en artifact, badges de couverture séparés Core / State / wiring Avalonia publiés sur la branche `badges`, affichés dans le README)
 - [ ] Publication de binaires en GitHub Release au push d'un tag (workflow de release, voir section « Crée une version x.y.z » d'AGENTS.md)
-- [ ] Icône d'apllication
+- [x] Icône d'application — fait le 2026-10-27 : design « Le tandem » style iOS (tuile khaki unie à coins arrondis — le jaune du bandeau de confirmation — glyphe bleu nuit : l'encadrement derrière en contour, la photo devant en carte pleine) ; générée par `scripts/generate-icon.fsx` (SkiaSharp, `dotnet fsi`, avec garde-fou sur les pixels : l'ordre des canaux de `SKColor(r, g, b, a)` a menti une première fois) dans `src/RawTandem.UI/Assets/` ; `Window.Icon` charge `icon.png` (barre des tâches Linux), `<ApplicationIcon>` porte `icon.ico` (exe Windows, 16→256 px)
 
 ## Documentation
 
