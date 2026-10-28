@@ -6,18 +6,11 @@ open RawTandem.Core.Constants
 open RawTandem.Core.Tandems
 open RawTandem.Core.FolderScan
 
-/// Sens d'un déplacement planifié : vers le sous-dossier RAW, vers la racine,
-/// ou renommage sur place (jumeaux de casse).
-type MoveKind =
-    | RawToSubfolder
-    | JpgToRoot
-    | RenameInPlace
-
 /// Un déplacement élémentaire calculé par le Core. Type de frontière Core/UI :
-/// l'UI n'exécute que ce plan, elle n'en invente pas.
+/// l'UI n'exécute que ce plan, elle n'en invente pas. Le plan d'option A ne
+/// déplace que des RAW appariés vers le sous-dossier.
 type PlannedMove =
-    { Kind: MoveKind
-      SourcePath: string
+    { SourcePath: string
       TargetPath: string
       /// Vrai quand la cible existe déjà : le renommage suit la convention
       /// système « stem (n).ext », jamais d'écrasement.
@@ -44,17 +37,15 @@ let rec private renamedTarget (targetDir: string) (fileName: string) (attempt: i
     if File.Exists(candidate) then renamedTarget targetDir fileName (attempt + 1)
     else candidate
 
-let private plannedMove kind (sourceDir: string) (fileName: string) (targetDir: string) =
+let private plannedMove (sourceDir: string) (fileName: string) (targetDir: string) =
     let directTarget = Path.Combine(targetDir, fileName)
 
     if File.Exists(directTarget) then
-        { Kind = kind
-          SourcePath = Path.Combine(sourceDir, fileName)
+        { SourcePath = Path.Combine(sourceDir, fileName)
           TargetPath = renamedTarget targetDir fileName 1
           TargetRenamed = true }
     else
-        { Kind = kind
-          SourcePath = Path.Combine(sourceDir, fileName)
+        { SourcePath = Path.Combine(sourceDir, fileName)
           TargetPath = directTarget
           TargetRenamed = false }
 
@@ -69,7 +60,7 @@ let planOrganization (folderPath: string) (scan: FolderScan) : OrganizationPlan 
 
     let moves =
         [ for t in scan.TandemsToOrganize do
-              plannedMove RawToSubfolder folderPath t.RawFileName rawDir ]
+              plannedMove folderPath t.RawFileName rawDir ]
 
     { RawDirectoryPath = rawDir; Moves = moves }
 
@@ -87,8 +78,9 @@ let applyOrganization (plan: OrganizationPlan) : MoveOutcome =
     match plan.Moves with
     | [] -> { Moved = []; Failed = [] }
     | moves ->
-        if moves |> List.exists (fun m -> m.Kind = RawToSubfolder) then
-            Directory.CreateDirectory(plan.RawDirectoryPath) |> ignore
+        // Le plan ne cible que le sous-dossier RAW : il est créé seulement
+        // quand des fichiers y sont déplacés.
+        Directory.CreateDirectory(plan.RawDirectoryPath) |> ignore
 
         let results = moves |> List.map moveOne
 

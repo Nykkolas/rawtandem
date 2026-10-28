@@ -471,7 +471,7 @@ let scenarioTests =
                 // UC-3 : l'utilisateur demande l'organisation.
                 // UC-4 : l'application demande confirmation, 3 RW2 annoncés.
                 let s4 = s2 |> step OrganizeRequested
-                Expect.equal s4.Screen (Confirming(Organizing, OrganizeFolder(3, 0))) "UC-4 : 3 fichiers déplacés annoncés"
+                Expect.equal s4.Screen (Confirming(Organizing, OrganizeFolder 3)) "UC-4 : 3 fichiers déplacés annoncés"
 
                 // UC-5 : l'utilisateur confirme.
                 // UC-6 : l'application crée RAW/ et déplace les RW2 (vrais déplacements).
@@ -613,7 +613,7 @@ let scenarioTests =
                 // 2a-5 : l'utilisateur est satisfait, le scénario principal
                 // reprend — il organise (vrais déplacements sur le disque).
                 let s5 = s4 |> step OrganizeRequested
-                Expect.equal s5.Screen (Confirming(Organizing, OrganizeFolder(2, 0))) "UC-4 : 2 RW2 appariés annoncés"
+                Expect.equal s5.Screen (Confirming(Organizing, OrganizeFolder 2)) "UC-4 : 2 RW2 appariés annoncés"
 
                 let s6 = s5 |> step OrganizeConfirmed
                 Expect.equal s6.Screen (Working Triaging) "passage automatique au tri après l'organisation"
@@ -706,7 +706,7 @@ let scenarioTests =
                     // demande de rangement aboutit désormais à la confirmation
                     // (elle était refusée s2 → sRefusal, elle passe s4 → s5).
                     let s5 = s4 |> step OrganizeRequested
-                    Expect.equal s5.Screen (Confirming(Organizing, OrganizeFolder(1, 0))) "UC-4 : le rangement redevient possible, 1 RW2 apparié annoncé"
+                    Expect.equal s5.Screen (Confirming(Organizing, OrganizeFolder 1)) "UC-4 : le rangement redevient possible, 1 RW2 apparié annoncé"
     
                     let s6 = s5 |> step OrganizeConfirmed
                     Expect.equal s6.Screen (Working Triaging) "passage automatique au tri après l'organisation"
@@ -1004,7 +1004,7 @@ let scenarioTests =
             // jamais de clic mort en silence. Seuls Déplacer / Annuler restent
             // actifs. Les boutons-maquettes du prototype (Voir les fichiers,
             // Réanalyser) suivent la même règle.
-            let buttons = renderedButtons (displayState (Confirming(Organizing, OrganizeFolder(1, 0))))
+            let buttons = renderedButtons (displayState (Confirming(Organizing, OrganizeFolder 1)))
 
             let outsideQuestion =
                 buttons

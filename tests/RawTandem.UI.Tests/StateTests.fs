@@ -40,8 +40,7 @@ let private fixtureStems = [ "P1"; "P2"; "P3" ]
 let private fixtureScan = { emptyScan with TandemsToOrganize = fixtureStems |> List.map tandem }
 
 let private rawMoveFixture stem =
-    { Kind = RawToSubfolder
-      SourcePath = sprintf "%s/%s.RW2" fixtureFolderPath stem
+    { SourcePath = sprintf "%s/%s.RW2" fixtureFolderPath stem
       TargetPath = sprintf "%s/RAW/%s.RW2" fixtureFolderPath stem
       TargetRenamed = false }
 
@@ -73,13 +72,6 @@ let private deletionTrashed (stem: string) =
         [ sprintf "%s/%s.JPG" fixtureFolderPath stem
           sprintf "%s/%s.RW2" fixtureFolderPath stem ]
       Failed = [] }
-
-/// Déplacement factice : seule la sorte compte pour les bilans de statut.
-let private moveOf (kind: MoveKind) (fileName: string) =
-    { Kind = kind
-      SourcePath = sprintf "%s/%s" fixtureFolderPath fileName
-      TargetPath = sprintf "%s/RAW/%s" fixtureFolderPath fileName
-      TargetRenamed = false }
 
 [<Tests>]
 let stateTests =
@@ -525,9 +517,9 @@ let stateTests =
                     Expect.equal state.Screen (Working Home) "aucun changement d'écran"
                 }
 
-                test "OrganizePlanned with moves opens the Confirming screen with counts by kind" {
+                test "OrganizePlanned with moves opens the Confirming screen with the RAW count" {
                     let state = organizing' () |> update' (OrganizePlanned(fixtureFolderPath, planFixture))
-                    Expect.equal state.Screen (Confirming(Organizing, OrganizeFolder(3, 0))) "confirmation avec comptes RAW/JPG"
+                    Expect.equal state.Screen (Confirming(Organizing, OrganizeFolder 3)) "confirmation avec le compte de RAW appariés"
                 }
 
                 test "OrganizePlanned without moves reports and stays" {
@@ -632,7 +624,7 @@ let stateTests =
                         |> update' (OrganizePlanned(fixtureFolderPath, planFixture)) // nouvelle question affichée
                         |> update' (OrganizeFailed(fixtureFolderPath, "acces refuse")) // échec de l'organisation en arrière-plan
 
-                    Expect.equal state.Screen (Confirming(Organizing, OrganizeFolder(3, 0))) "la question posée reste affichée"
+                    Expect.equal state.Screen (Confirming(Organizing, OrganizeFolder 3)) "la question posée reste affichée"
                     Expect.stringContains state.Status "acces refuse" "l'erreur d'arrière-plan est visible dans le bandeau bas"
                 }
 
@@ -657,7 +649,7 @@ let stateTests =
                         |> update' (OrganizePlanned(fixtureFolderPath, planFixture)) // nouvelle question affichée
                         |> update' (OrganizeCompleted(fixtureFolderPath, outcome)) // se termine en échec
 
-                    Expect.equal state.Screen (Confirming(Organizing, OrganizeFolder(3, 0))) "la question posée reste affichée"
+                    Expect.equal state.Screen (Confirming(Organizing, OrganizeFolder 3)) "la question posée reste affichée"
                     Expect.stringContains state.Status "acces refuse" "l'échec d'arrière-plan est visible dans le bandeau bas"
                 }
 
@@ -681,7 +673,7 @@ let stateTests =
                         |> update' (OrganizePlanned(fixtureFolderPath, planFixture)) // nouvelle question affichée
                         |> update' (OrganizeCompleted(fixtureFolderPath, outcomeAllMoved)) // réussite
 
-                    Expect.equal state.Screen (Confirming(Organizing, OrganizeFolder(3, 0))) "la question posée reste affichée"
+                    Expect.equal state.Screen (Confirming(Organizing, OrganizeFolder 3)) "la question posée reste affichée"
                     Expect.stringContains state.Status SuccessStatusPrefix "la réussite reste visible dans le bandeau bas"
                 }
 
@@ -709,22 +701,14 @@ let stateTests =
                     Expect.equal state expected "rien à annuler, aucun changement d'écran"
                 }
 
-                test "OrganizeCompleted counts JPG moves and renames in the summary" {
-                    // Les trois sortes de déplacement doivent apparaître dans
-                    // le bilan, pas seulement les RAW déplacés.
-                    let outcome =
-                        { Moved =
-                            [ moveOf RawToSubfolder "P1.RW2"
-                              moveOf JpgToRoot "P2.JPG"
-                              moveOf RenameInPlace "P3.jpg" ]
-                          Failed = [] }
-
-                    let state = organizing' () |> update' (OrganizeCompleted(fixtureFolderPath, outcome))
+                test "OrganizeCompleted counts every moved RAW file in the summary" {
+                    // Le plan d'option A ne déplace que des RAW appariés :
+                    // le bilan les compte tous, pluriel régulier compris.
+                    let state =
+                        organizing' () |> update' (OrganizeCompleted(fixtureFolderPath, outcomeAllMoved))
 
                     Expect.equal state.Screen (Working Triaging) "passage au tri après succès"
-                    Expect.stringContains state.Status "1 RAW déplacés" "les RAW déplacés sont comptés"
-                    Expect.stringContains state.Status "1 JPG replacés" "les JPG replacés sont comptés"
-                    Expect.stringContains state.Status "1 fichiers renommés" "les renommages sont comptés"
+                    Expect.stringContains state.Status "3 RAW déplacés" "tous les RAW déplacés sont comptés"
                 } ]
 
           testList
@@ -884,6 +868,38 @@ let stateTests =
                     Expect.isFalse (isQuestionPending working) "pas de question : actions libres"
                     Expect.isTrue (isQuestionPending question) "question affichée : actions grisées"
                     Expect.isFalse (isQuestionPending answered) "question tranchée : les actions reviennent"
+                }
+
+                test "confirmationQuestion announces exactly the paired RAW moves (option A)" {
+                    // Le bandeau de confirmation ne ment jamais : le plan ne
+                    // déplace que les RAW des couples appariés (option A),
+                    // la question ne promet donc ni les orphelins ni d'autres
+                    // fichiers (audit 2026-10-28 — le texte annonçait à tort
+                    // « RAW sans JPG inclus »).
+                    let question = confirmationQuestion (OrganizeFolder 3)
+
+                    Expect.equal
+                        question
+                        "Déplacer 3 RAW appariés de la racine vers le sous-dossier « RAW » ?"
+                        "exactement le périmètre du plan, pas plus"
+
+                    Expect.isFalse (question.Contains "sans JPG") "aucune promesse sur les RAW orphelins"
+                }
+
+                test "confirmationQuestion singularizes one paired RAW move" {
+                    Expect.equal
+                        (confirmationQuestion (OrganizeFolder 1))
+                        "Déplacer 1 RAW apparié de la racine vers le sous-dossier « RAW » ?"
+                        "pluriel français régulier"
+                }
+
+                test "confirmationQuestion names both files of the tandem to delete" {
+                    let question = confirmationQuestion (DeleteTandem "P1")
+
+                    Expect.equal
+                        question
+                        "Supprimer le tandem P1.JPG + P1.RW2 ? Les deux fichiers iront dans la corbeille (récupérables)."
+                        "la suppression annonce les deux fichiers du couple"
                 }
 
                 test "currentJpgFileName exposes the scanned name of the current tandem" {

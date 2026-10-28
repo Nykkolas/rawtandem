@@ -79,34 +79,14 @@ let private statusView (state: State) =
     ]
 
 let private confirmationView (action: PendingAction) (dispatch: Msg -> unit) =
-    let question, confirmLabel, confirmMsg, cancelMsg =
+    // La question vit dans le modèle de vue (`State.confirmationQuestion`,
+    // pure et testée) : la vue n'en garde que le mapping vers des pixels.
+    let question = confirmationQuestion action
+
+    let confirmLabel, confirmMsg, cancelMsg =
         match action with
-        | OrganizeFolder (rawMoves, jpgMoves) ->
-            let moveQuestion =
-                match rawMoves, jpgMoves with
-                | r, 0 ->
-                    sprintf
-                        "Déplacer %d fichiers .RW2 de la racine vers le sous-dossier « %s » ? (RAW sans JPG inclus)"
-                        r
-                        RawSubfolderName
-                | 0, j ->
-                    sprintf "Replacer %d JPG du sous-dossier « %s » à la racine ?" j RawSubfolderName
-                | r, j ->
-                    sprintf
-                        "Déplacer %d fichiers .RW2 vers le sous-dossier « %s » et replacer %d JPG de « %s » à la racine ?"
-                        r
-                        RawSubfolderName
-                        j
-                        RawSubfolderName
-            moveQuestion, "Déplacer", OrganizeConfirmed, OrganizeCancelled
-        | DeleteTandem stem ->
-            sprintf
-                "Supprimer le tandem %s.JPG + %s.RW2 ? Les deux fichiers iront dans la corbeille (récupérables)."
-                stem
-                stem,
-            "Supprimer",
-            DeleteTandemConfirmed,
-            DeleteTandemCancelled
+        | OrganizeFolder _ -> "Déplacer", OrganizeConfirmed, OrganizeCancelled
+        | DeleteTandem _ -> "Supprimer", DeleteTandemConfirmed, DeleteTandemCancelled
 
     Border.create [
         Border.dock Dock.Top

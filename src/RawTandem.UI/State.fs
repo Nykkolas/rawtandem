@@ -23,7 +23,7 @@ type Phase =
 
 /// Action en attente de confirmation explicite de l'utilisateur.
 type PendingAction =
-    | OrganizeFolder of rawMoves: int * jpgMoves: int
+    | OrganizeFolder of rawMoves: int
     | DeleteTandem of stem: string
 
 /// Écran courant : une action en attente de confirmation est un écran à part
@@ -115,6 +115,25 @@ let isQuestionPending (state: State) =
 /// dynamiques de l'UI, jamais de « photo(s) ».
 let pluralized (count: int) (noun: string) =
     if count = 1 then sprintf "%d %s" count noun else sprintf "%d %ss" count noun
+
+/// Question posée dans le bandeau jaune (RC-05) pour une action en attente de
+/// confirmation. Le périmètre annoncé doit être exactement celui du plan qui
+/// sera exécuté : la question ne promet jamais plus que l'application ne fera.
+/// Modèle de vue : fonction pure testée, la vue n'en affiche que le texte.
+let confirmationQuestion (action: PendingAction) =
+    match action with
+    | OrganizeFolder rawMoves ->
+        // Option A : le plan ne déplace que les RAW des couples appariés —
+        // la question n'annonce ni les orphelins ni d'autres fichiers.
+        sprintf
+            "Déplacer %s de la racine vers le sous-dossier « %s » ?"
+            (pluralized rawMoves "RAW apparié")
+            RawSubfolderName
+    | DeleteTandem stem ->
+        sprintf
+            "Supprimer le tandem %s.JPG + %s.RW2 ? Les deux fichiers iront dans la corbeille (récupérables)."
+            stem
+            stem
 
 /// Un problème d'organisation signalé à l'utilisateur — jamais réparé par
 /// l'application (option A, PROPOSITION-organisation.md) : une phrase
@@ -477,22 +496,17 @@ let private reportBackgroundFailure (state: State) (status: string) : State =
     | Confirming _ -> { state with Status = status }
     | Working _ -> { state with Screen = Working Organizing; Status = status }
 
-/// Statut de synthèse d'une exécution de plan réussie.
+/// Statut de synthèse d'une exécution de plan réussie : le plan d'option A ne
+/// déplace que les RAW appariés vers le sous-dossier, le bilan les compte.
 let private completedStatus (outcome: MoveOutcome) =
-    let rawMoved = outcome.Moved |> List.filter (fun m -> m.Kind = RawToSubfolder) |> List.length
-    let jpgMoved = outcome.Moved |> List.filter (fun m -> m.Kind = JpgToRoot) |> List.length
-    let renamed = outcome.Moved |> List.filter (fun m -> m.Kind = RenameInPlace) |> List.length
-
-    let parts =
-        [ if rawMoved > 0 then
-              sprintf "%d RAW déplacés vers « %s »" rawMoved RawSubfolderName
-          if jpgMoved > 0 then
-              sprintf "%d JPG replacés à la racine" jpgMoved
-          if renamed > 0 then
-              sprintf "%d fichiers renommés (jumeaux de casse)" renamed ]
-
-    if List.isEmpty parts then sprintf "%sRien à déplacer." SuccessStatusPrefix
-    else sprintf "%s%s." SuccessStatusPrefix (String.concat ", " parts)
+    if List.isEmpty outcome.Moved then
+        sprintf "%sRien à déplacer." SuccessStatusPrefix
+    else
+        sprintf
+            "%s%s vers « %s »."
+            SuccessStatusPrefix
+            (pluralized outcome.Moved.Length "RAW déplacé")
+            RawSubfolderName
 
 /// Statut de synthèse d'une exécution de plan, réussite ou échec : le bandeau
 /// bas reflète toujours l'effet réel sur les fichiers.
@@ -504,21 +518,6 @@ let private movesOutcomeStatus (outcome: MoveOutcome) =
 
         sprintf
             "%s%d déplacements effectués, %d en échec (ex. %s : %s)."
-            ErrorStatusPrefix
-            outcome.Moved.Length
-            outcome.Failed.Length
-            (Path.GetFileName failedMove.SourcePath)
-            failedReason
-
-/// Statut de synthèse d'une résolution de doublons, réussite ou échec.
-let private duplicatesOutcomeStatus (outcome: MoveOutcome) =
-    if List.isEmpty outcome.Failed then
-        sprintf "%s%d doublons et jumeaux de casse renommés et rangés." SuccessStatusPrefix outcome.Moved.Length
-    else
-        let failedMove, failedReason = List.head outcome.Failed
-
-        sprintf
-            "%s%d anomalies résolues, %d en échec (ex. %s : %s)."
             ErrorStatusPrefix
             outcome.Moved.Length
             outcome.Failed.Length
@@ -690,11 +689,8 @@ let private updateCore (msg: Msg) (state: State) : State * Cmd<Msg> =
                 if List.isEmpty plan.Moves then
                     { state with Status = "Rien à remettre en ordre." }, Cmd.none
                 else
-                    let rawMoves = plan.Moves |> List.filter (fun m -> m.Kind = RawToSubfolder) |> List.length
-                    let jpgMoves = plan.Moves |> List.filter (fun m -> m.Kind = JpgToRoot) |> List.length
-
                     { state with
-                        Screen = Confirming(Organizing, OrganizeFolder(rawMoves, jpgMoves)) },
+                        Screen = Confirming(Organizing, OrganizeFolder plan.Moves.Length) },
                     Cmd.none
             | Working _ | Confirming _ ->
                 // L'utilisateur a quitté l'organisation : le plan est obsolète.

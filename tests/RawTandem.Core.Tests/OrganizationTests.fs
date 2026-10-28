@@ -33,7 +33,7 @@ let organizationTests =
 
               Expect.equal
                   plan.Moves
-                  [ { Kind = RawToSubfolder
+                  [ {
                       SourcePath = Path.Combine(folder, "P1.RW2")
                       TargetPath = Path.Combine(folder, RawSubfolderName, "P1.RW2")
                       TargetRenamed = false } ]
@@ -70,11 +70,11 @@ let organizationTests =
 
               Expect.equal
                   plan.Moves
-                  [ { Kind = RawToSubfolder
+                  [ {
                       SourcePath = Path.Combine(folder, "P1.RW2")
                       TargetPath = Path.Combine(folder, RawSubfolderName, "P1.RW2")
                       TargetRenamed = false }
-                    { Kind = RawToSubfolder
+                    {
                       SourcePath = Path.Combine(folder, "P2.RW2")
                       TargetPath = Path.Combine(folder, RawSubfolderName, "P2.RW2")
                       TargetRenamed = false } ]
@@ -126,7 +126,7 @@ let organizationTests =
 
               Expect.equal
                   plan.Moves
-                  [ { Kind = RawToSubfolder
+                  [ {
                       SourcePath = Path.Combine(folder, "P9.RW2")
                       TargetPath = Path.Combine(raw, "P9 (2).RW2")
                       TargetRenamed = true } ]
@@ -139,14 +139,12 @@ let organizationTests =
               let folder = tempFolder ()
               touch folder "P1.RW2"
 
-              let rawOnlyFolder = tempFolder ()
-              touch rawOnlyFolder "P2.RW2"
+              let otherFolder = tempFolder ()
 
               let plan =
                   { RawDirectoryPath = Path.Combine(folder, RawSubfolderName)
                     Moves =
-                      [ { Kind = RawToSubfolder
-                          SourcePath = Path.Combine(folder, "P1.RW2")
+                      [ { SourcePath = Path.Combine(folder, "P1.RW2")
                           TargetPath = Path.Combine(folder, RawSubfolderName, "P1.RW2")
                           TargetRenamed = false } ] }
 
@@ -157,20 +155,27 @@ let organizationTests =
               Expect.isTrue (File.Exists(Path.Combine(folder, RawSubfolderName, "P1.RW2"))) "la cible existe"
               Expect.isFalse (File.Exists(Path.Combine(folder, "P1.RW2"))) "la source n'est plus à la racine"
 
-              // Plan sans déplacement vers le sous-dossier : le dossier RAW
-              // ne doit pas être créé inutilement.
-              let jpgOnly =
-                  { RawDirectoryPath = Path.Combine(rawOnlyFolder, RawSubfolderName)
+              // Plan vide : aucun déplacement, le dossier RAW n'est pas créé.
+              let emptyOutcome =
+                  applyOrganization { RawDirectoryPath = Path.Combine(otherFolder, RawSubfolderName); Moves = [] }
+
+              Expect.equal emptyOutcome.Moved.Length 0 "aucun déplacement"
+              Expect.isEmpty emptyOutcome.Failed "aucun échec"
+              Expect.isFalse (Directory.Exists(Path.Combine(otherFolder, RawSubfolderName))) "aucun dossier créé sans déplacement"
+
+              // Déplacement dont la source a disparu : échec propre, signalé,
+              // jamais un crash.
+              let missingSource =
+                  { RawDirectoryPath = Path.Combine(otherFolder, RawSubfolderName)
                     Moves =
-                      [ { Kind = JpgToRoot
-                          SourcePath = Path.Combine(rawOnlyFolder, RawSubfolderName, "P2.RW2")
-                          TargetPath = Path.Combine(rawOnlyFolder, "P2.RW2")
+                      [ { SourcePath = Path.Combine(otherFolder, "P-manquant.RW2")
+                          TargetPath = Path.Combine(otherFolder, RawSubfolderName, "P-manquant.RW2")
                           TargetRenamed = false } ] }
 
-              let jpgOutcome = applyOrganization jpgOnly
+              let missingOutcome = applyOrganization missingSource
 
-              Expect.equal jpgOutcome.Failed.Length 1 "le plan incohérent échoue proprement"
-              Expect.isFalse (Directory.Exists(Path.Combine(rawOnlyFolder, RawSubfolderName))) "aucun dossier créé inutilement"
+              Expect.equal missingOutcome.Moved.Length 0 "rien n'a bougé"
+              Expect.equal missingOutcome.Failed.Length 1 "le plan incohérent échoue proprement"
           }
 
           test "applyOrganization never overwrites and reports a partial failure" {
@@ -184,11 +189,11 @@ let organizationTests =
               let plan =
                   { RawDirectoryPath = raw
                     Moves =
-                      [ { Kind = RawToSubfolder
+                      [ {
                           SourcePath = Path.Combine(folder, "P1.RW2")
                           TargetPath = Path.Combine(raw, "P1.RW2")
                           TargetRenamed = false }
-                        { Kind = RawToSubfolder
+                        {
                           SourcePath = Path.Combine(folder, "P2.RW2")
                           TargetPath = Path.Combine(raw, "P2.RW2")
                           TargetRenamed = false } ] }
