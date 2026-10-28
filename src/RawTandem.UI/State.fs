@@ -44,6 +44,11 @@ type DisplayMode =
 type State =
     { Screen: Screen
       FolderPath: string option
+      /// Identifiant de la dernière demande de scan : incrémenté à chaque
+      /// `FolderSelected`, embarqué dans chaque résultat de scan — `update`
+      /// n'applique que les résultats de la demande la plus récente, les
+      /// résultats d'une demande dépassée sont ignorés (courses de scan).
+      ScanRequestId: int
       /// Résultat du scan du dossier, classé selon l'arbre de décision.
       Scan: FolderScan
       CurrentIndex: int
@@ -55,10 +60,10 @@ type State =
 
 type Msg =
     | FolderSelected of path: string
-    | FolderScanned of scan: FolderScan
-    | FolderScanFailed of error: string
-    | FolderRescanned of folderPath: string * scan: FolderScan
-    | FolderRescanFailed of error: string
+    | FolderScanned of requestId: int * folderPath: string * scan: FolderScan
+    | FolderScanFailed of requestId: int * folderPath: string * error: string
+    | FolderRescanned of requestId: int * folderPath: string * scan: FolderScan
+    | FolderRescanFailed of requestId: int * folderPath: string * error: string
     | OrganizeRequested
     | OrganizePlanned of plan: OrganizationPlan
     | OrganizePlanningFailed of error: string
@@ -251,6 +256,7 @@ let private loadCurrentJpgCmd (state: State) : Cmd<Msg> =
 let init () : State * Cmd<Msg> =
     { Screen = Working Home
       FolderPath = None
+      ScanRequestId = 0
       Scan = emptyScan
       CurrentIndex = 0
       DisplayMode = Normal
@@ -262,6 +268,14 @@ let init () : State * Cmd<Msg> =
 /// en attente : l'incohérence n'est jamais avalée en silence.
 let private reportUnexpectedConfirmation (state: State) : State * Cmd<Msg> =
     { state with Status = UnexpectedConfirmationStatus }, Cmd.none
+
+/// Fraîcheur d'un résultat de scan (ouverture ou rafraîchissement) : il
+/// n'appartient qu'à la demande la plus récente ET au dossier courant —
+/// double critère, comme le JPG (dossier + stem). Un résultat dépassé
+/// (dossier changé, ou double demande du même dossier) est ignoré : ses
+/// stems ne doivent jamais s'associer aux chemins d'un autre dossier.
+let private isCurrentScanRequest (state: State) (requestId: int) (folderPath: string) =
+    requestId = state.ScanRequestId && state.FolderPath = Some folderPath
 
 /// Vrai quand le scan ne montre rien à remettre en ordre : aucun tandem à
 /// organiser et aucune anomalie (croisés, inversés, orphelins rangés,
@@ -306,24 +320,26 @@ let private scanStatus (scan: FolderScan) =
     | Some note -> baseStatus + note
     | None -> baseStatus
 
-/// Commande asynchrone de scan d'un dossier.
-let private scanCmd (folderPath: string) : Cmd<Msg> =
+/// Commande asynchrone de scan d'un dossier : le résultat embarque la demande
+/// (identifiant + dossier) qui l'a lancée, pour que `update` n'applique que
+/// les résultats de la demande la plus récente.
+let private scanCmd (requestId: int) (folderPath: string) : Cmd<Msg> =
     Cmd.OfAsync.either
         (fun path -> async { return scanFolder path })
         folderPath
-        FolderScanned
-        (fun ex -> FolderScanFailed ex.Message)
+        (fun scan -> FolderScanned(requestId, folderPath, scan))
+        (fun ex -> FolderScanFailed(requestId, folderPath, ex.Message))
 
 /// Commande de rafraîchissement du scan après une opération de l'application
 /// (des fichiers ont bougé) : contrairement à scanCmd, le résultat ne change
 /// pas d'écran — le dossier courant continue d'être affiché, le scan seul est
-/// remplacé.
-let private rescanCmd (folderPath: string) : Cmd<Msg> =
+/// remplacé. Comme scanCmd, le résultat embarque la demande qui l'a lancée.
+let private rescanCmd (requestId: int) (folderPath: string) : Cmd<Msg> =
     Cmd.OfAsync.either
         (fun path -> async { return scanFolder path })
         folderPath
-        (fun scan -> FolderRescanned(folderPath, scan))
-        (fun ex -> FolderRescanFailed ex.Message)
+        (fun scan -> FolderRescanned(requestId, folderPath, scan))
+        (fun ex -> FolderRescanFailed(requestId, folderPath, ex.Message))
 
 /// Un message d'arrière-plan ne referme jamais une question affichée : annuler
 /// une action en attente est le choix de l'utilisateur, pas celui d'un échec
@@ -354,54 +370,87 @@ let private completedStatus (outcome: MoveOutcome) =
 let private updateCore (msg: Msg) (state: State) : State * Cmd<Msg> =
     match msg with
     | FolderSelected path ->
+        // Chaque sélection de dossier est une nouvelle demande de scan :
+        // l'identifiant voyage avec le résultat, tout résultat d'une demande
+        // dépassée est ignoré dans update (courses de scan, audit 2026-10-28).
+        let requestId = state.ScanRequestId + 1
+
         { state with
             FolderPath = Some path
+            ScanRequestId = requestId
             Status = "Analyse du dossier…" },
-        scanCmd path
+        scanCmd requestId path
 
-    | FolderScanned scan ->
-        state.CurrentJpg |> Option.iter disposeImage
+    | FolderScanned(requestId, folderPath, scan) ->
+        // Garde de fraîcheur : seul le résultat de la dernière demande
+        // s'applique. Un scan retardé d'un dossier précédent ne doit ni
+        // remplacer le scan affiché ni changer l'écran (ses stems seraient
+        // associés aux chemins du dossier courant).
+        if isCurrentScanRequest state requestId folderPath then
+            state.CurrentJpg |> Option.iter disposeImage
 
-        let scanned =
-            { state with
-                Scan = scan
-                CurrentIndex = 0
-                CurrentJpg = None
-                Status = scanStatus scan }
+            let scanned =
+                { state with
+                    Scan = scan
+                    CurrentIndex = 0
+                    CurrentJpg = None
+                    Status = scanStatus scan }
 
-        // Dossier déjà organisé sans rien à remettre en ordre : l'écran
-        // d'organisation n'a rien à proposer, le tri est affiché directement
-        // (UC trier-dossier-deja-organise). Toute anomalie restante garde
-        // l'écran d'organisation, seul endroit où elle est signalée.
-        if hasNothingToFix scan then
-            let nextState = { scanned with Screen = Working Triaging }
-            nextState, loadCurrentJpgCmd nextState
+            // Une question affichée n'est jamais refermée par un résultat
+            // d'arrière-plan : le scan et le statut se mettent à jour sous
+            // elle, l'écran (et la question qu'il porte) restent en place.
+            match state.Screen with
+            | Confirming _ -> scanned, Cmd.none
+            | Working _ ->
+                // Dossier déjà organisé sans rien à remettre en ordre : l'écran
+                // d'organisation n'a rien à proposer, le tri est affiché directement
+                // (UC trier-dossier-deja-organise). Toute anomalie restante garde
+                // l'écran d'organisation, seul endroit où elle est signalée.
+                if hasNothingToFix scan then
+                    let nextState = { scanned with Screen = Working Triaging }
+                    nextState, loadCurrentJpgCmd nextState
+                else
+                    { scanned with Screen = Working Organizing }, Cmd.none
         else
-            { scanned with Screen = Working Organizing }, Cmd.none
+            state, Cmd.none
 
-    | FolderScanFailed error ->
-        state.CurrentJpg |> Option.iter disposeImage
+    | FolderScanFailed(requestId, folderPath, error) ->
+        // Même garde : l'échec retardé d'un ancien dossier ne ramène pas
+        // l'utilisateur à l'accueil. Sans question affichée, l'échec frais
+        // ramène à l'accueil : c'est le seul endroit où l'on peut recommencer.
+        if isCurrentScanRequest state requestId folderPath then
+            state.CurrentJpg |> Option.iter disposeImage
 
-        { state with
-            Screen = Working Home
-            CurrentJpg = None
-            Status = sprintf "%sAnalyse du dossier impossible : %s" ErrorStatusPrefix error },
-        Cmd.none
+            let status = sprintf "%sAnalyse du dossier impossible : %s" ErrorStatusPrefix error
 
-    | FolderRescanned(folder, scan) ->
+            match state.Screen with
+            | Confirming _ -> { state with CurrentJpg = None; Status = status }, Cmd.none
+            | Working _ ->
+                { state with
+                    Screen = Working Home
+                    CurrentJpg = None
+                    Status = status },
+                Cmd.none
+        else
+            state, Cmd.none
+
+    | FolderRescanned(requestId, folderPath, scan) ->
         // Rien ne bouge que le scan : un rafraîchissement d'arrière-plan ne
         // referme jamais une question affichée et n'écrase pas le bilan
-        // visible (règles VISION, audit itération 4). Seul le dossier courant
-        // est rafraîchi : un résultat d'un autre dossier n'est pas le nôtre.
-        if state.FolderPath = Some folder then
+        // visible (règles VISION, audit itération 4). Le résultat n'appartient
+        // qu'à la demande la plus récente du dossier courant.
+        if isCurrentScanRequest state requestId folderPath then
             { state with Scan = scan }, Cmd.none
         else
             state, Cmd.none
 
-    | FolderRescanFailed error ->
-        { state with
-            Status = sprintf "%sRafraîchissement du dossier impossible : %s" ErrorStatusPrefix error },
-        Cmd.none
+    | FolderRescanFailed(requestId, folderPath, error) ->
+        if isCurrentScanRequest state requestId folderPath then
+            { state with
+                Status = sprintf "%sRafraîchissement du dossier impossible : %s" ErrorStatusPrefix error },
+            Cmd.none
+        else
+            state, Cmd.none
 
     // ---------- Organisation ----------
 
@@ -503,7 +552,7 @@ let private updateCore (msg: Msg) (state: State) : State * Cmd<Msg> =
         // rafraîchi en arrière-plan, sans écran ni statut.
         let refresh =
             match state.FolderPath with
-            | Some folder -> rescanCmd folder
+            | Some folder -> rescanCmd state.ScanRequestId folder
             | None -> Cmd.none
 
         if List.isEmpty outcome.Failed then
@@ -662,7 +711,7 @@ let private updateCore (msg: Msg) (state: State) : State * Cmd<Msg> =
             { state with
                 Screen = Working Organizing
                 Status = sprintf "%sDossier renommé en « %s », nouvelle analyse…" SuccessStatusPrefix RawSubfolderName },
-            scanCmd folder
+            scanCmd state.ScanRequestId folder
         | None ->
             { state with
                 Screen = Working Organizing

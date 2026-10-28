@@ -53,7 +53,7 @@ let private planFixture =
 let organizing' () : State =
     init' ()
     |> update' (FolderSelected fixtureFolderPath)
-    |> update' (FolderScanned fixtureScan)
+    |> update' (FolderScanned(1, fixtureFolderPath, fixtureScan))
 
 /// Écran de confirmation de l'organisation (demande + plan calculé).
 let confirming' () : State =
@@ -112,7 +112,7 @@ let stateTests =
 
                 test "FolderScanned announces an already organized folder" {
                     let scan = { emptyScan with OrganizedTandems = [ tandem "P1" ] }
-                    let state = init' () |> update' (FolderSelected fixtureFolderPath) |> update' (FolderScanned scan)
+                    let state = init' () |> update' (FolderSelected fixtureFolderPath) |> update' (FolderScanned(1, fixtureFolderPath, scan))
                     Expect.stringContains state.Status "déjà organisé" "message dédié"
                 }
 
@@ -121,7 +121,7 @@ let stateTests =
                     // sans aucune anomalie, n'a rien à proposer à l'écran
                     // d'organisation — le tri est affiché directement.
                     let scan = { emptyScan with OrganizedTandems = [ tandem "P1" ] }
-                    let state = init' () |> update' (FolderSelected fixtureFolderPath) |> update' (FolderScanned scan)
+                    let state = init' () |> update' (FolderSelected fixtureFolderPath) |> update' (FolderScanned(1, fixtureFolderPath, scan))
 
                     Expect.equal state.Screen (Working Triaging) "l'écran d'organisation est sauté : tri direct"
                     Expect.equal state.CurrentIndex 0 "index initial"
@@ -137,14 +137,14 @@ let stateTests =
                             OrganizedTandems = [ tandem "P1" ]
                             OrphanJpgsInRaw = [ "PX.JPG" ] }
 
-                    let state = init' () |> update' (FolderSelected fixtureFolderPath) |> update' (FolderScanned scan)
+                    let state = init' () |> update' (FolderSelected fixtureFolderPath) |> update' (FolderScanned(1, fixtureFolderPath, scan))
 
                     Expect.equal state.Screen (Working Organizing) "une anomalie garde l'écran d'organisation"
                 }
 
                 test "FolderScanned reports a RAW folder anomaly" {
                     let scan = { emptyScan with RawFolderIssue = Some RawFolderIsFile }
-                    let state = init' () |> update' (FolderSelected fixtureFolderPath) |> update' (FolderScanned scan)
+                    let state = init' () |> update' (FolderSelected fixtureFolderPath) |> update' (FolderScanned(1, fixtureFolderPath, scan))
                     Expect.stringContains state.Status "RAW" "l'anomalie est visible"
                 }
 
@@ -152,7 +152,7 @@ let stateTests =
                     let state =
                         init' ()
                         |> update' (FolderSelected fixtureFolderPath)
-                        |> update' (FolderScanFailed "acces refuse")
+                        |> update' (FolderScanFailed(1, fixtureFolderPath, "acces refuse"))
 
                     Expect.equal state.Screen (Working Home) "retour accueil"
                     Expect.stringContains state.Status "acces refuse" "message d'erreur visible"
@@ -169,7 +169,7 @@ let stateTests =
                     Expect.equal state.Screen (Working Triaging) "l'écran courant reste pendant l'analyse"
                     Expect.stringContains state.Status "Analyse" "analyse annoncée dans le bandeau"
 
-                    let scanned = state |> update' (FolderScanned fixtureScan)
+                    let scanned = state |> update' (FolderScanned(2, fixtureFolderPath, fixtureScan))
 
                     Expect.equal scanned.Screen (Working Organizing) "le nouveau dossier s'ouvre à l'organisation"
                 } ]
@@ -185,7 +185,7 @@ let stateTests =
                     let freshScan = { emptyScan with OrganizedTandems = [ tandem "P1" ] }
                     let state = { triaging' () with Scan = staleScan }
 
-                    let refreshed = state |> update' (FolderRescanned(fixtureFolderPath, freshScan))
+                    let refreshed = state |> update' (FolderRescanned(1, fixtureFolderPath, freshScan))
 
                     Expect.equal refreshed.Scan freshScan "le scan périmé est remplacé"
                     Expect.equal refreshed.Screen (Working Triaging) "l'écran ne bouge pas"
@@ -199,7 +199,7 @@ let stateTests =
                         { triaging' () with Scan = staleScan }
                         |> update' DeleteTandemRequested
 
-                    let refreshed = state |> update' (FolderRescanned(fixtureFolderPath, freshScan))
+                    let refreshed = state |> update' (FolderRescanned(1, fixtureFolderPath, freshScan))
 
                     Expect.equal
                         refreshed.Screen
@@ -213,16 +213,131 @@ let stateTests =
                     let state = { triaging' () with Scan = staleScan }
                     let freshScan = { emptyScan with OrganizedTandems = [ tandem "P1" ] }
 
-                    let refreshed = state |> update' (FolderRescanned(otherFolderPath, freshScan))
+                    let refreshed = state |> update' (FolderRescanned(1, otherFolderPath, freshScan))
 
                     Expect.equal refreshed.Scan staleScan "le scan d'un autre dossier n'écrase rien"
                 }
 
                 test "FolderRescanFailed reports in the status without changing screen" {
-                    let state = triaging' () |> update' (FolderRescanFailed "acces refuse")
+                    let state = triaging' () |> update' (FolderRescanFailed(1, fixtureFolderPath, "acces refuse"))
 
                     Expect.equal state.Screen (Working Triaging) "l'écran ne bouge pas"
                     Expect.isTrue (state.Status.StartsWith ErrorStatusPrefix) "l'échec est visible dans le bandeau"
+                } ]
+
+          testList
+              "scan request races"
+              [ // Courses sur les résultats de scan (audit 2026-10-28) : un
+                // résultat d'arrière-plan n'appartient qu'à la demande la plus
+                // récente. Les identifiants sont déterministes : init à 0,
+                // +1 à chaque FolderSelected — la demande 1 précède la 2.
+
+                test "a late scan result of a previous folder is ignored" {
+                    // Parcours UI : l'utilisateur ouvre A (analyse lente),
+                    // s'impatiente, ouvre B (analyse rapide) : le scan de B
+                    // arrive, puis celui de A. Le scan de A ne doit ni
+                    // remplacer celui de B ni toucher l'écran : ses stems
+                    // seraient associés aux chemins de B, et une suppression
+                    // au tri partirait dans le mauvais dossier.
+                    let scanA = { emptyScan with TandemsToOrganize = [ tandem "A1"; tandem "A2" ] }
+                    let scanB = { emptyScan with TandemsToOrganize = [ tandem "B1" ] }
+
+                    let state =
+                        init' ()
+                        |> update' (FolderSelected fixtureFolderPath) // demande 1 : dossier A
+                        |> update' (FolderSelected otherFolderPath) // demande 2 : dossier B
+                        |> update' (FolderScanned(2, otherFolderPath, scanB)) // B arrive en premier
+                        |> update' (FolderScanned(1, fixtureFolderPath, scanA)) // A arrive en retard
+
+                    Expect.equal state.FolderPath (Some otherFolderPath) "le dossier courant reste B"
+                    Expect.equal state.Scan scanB "le scan retardé de A n'écrase pas celui de B"
+                    Expect.equal state.Screen (Working Organizing) "l'écran ouvert pour B reste"
+                    Expect.stringContains state.Status "1 tandems à organiser" "le bandeau parle de B, pas de A"
+                }
+
+                test "a late scan failure of a previous folder does not go Home" {
+                    // L'échec tardif de A ne ramène pas à l'accueil : c'est
+                    // l'écran de B, analysé avec succès, qui est affiché.
+                    let state =
+                        init' ()
+                        |> update' (FolderSelected fixtureFolderPath) // demande 1 : dossier A, échouera
+                        |> update' (FolderSelected otherFolderPath) // demande 2 : dossier B
+                        |> update' (FolderScanned(2, otherFolderPath, fixtureScan))
+                        |> update' (FolderScanFailed(1, fixtureFolderPath, "acces refuse")) // échec tardif de A
+
+                    Expect.equal state.Screen (Working Organizing) "l'échec de A ne referme pas le dossier B"
+                    Expect.equal state.FolderPath (Some otherFolderPath) "le dossier courant reste B"
+                    Expect.stringContains state.Status "tandems à organiser" "le bilan de B reste affiché"
+                }
+
+                test "a double scan of the same folder applies only the latest request" {
+                    // Le chemin seul ne le voit pas : deux demandes du même
+                    // dossier, la première arrivée en retard ne doit pas
+                    // écraser le scan frais de la seconde.
+                    let firstScan = { emptyScan with TandemsToOrganize = [ tandem "P1" ] }
+                    let secondScan = { emptyScan with OrganizedTandems = [ tandem "P1" ] }
+
+                    let state =
+                        init' ()
+                        |> update' (FolderSelected fixtureFolderPath) // demande 1
+                        |> update' (FolderSelected fixtureFolderPath) // demande 2 : même dossier
+                        |> update' (FolderScanned(2, fixtureFolderPath, secondScan)) // résultat frais d'abord
+                        |> update' (FolderScanned(1, fixtureFolderPath, firstScan)) // résultat périmé ensuite
+
+                    Expect.equal state.Scan secondScan "seule la demande la plus récente s'applique"
+                }
+
+                test "a fresh scan result while a question is displayed updates the scan without closing it" {
+                    // Le scan du dossier courant arrive pendant qu'une question
+                    // est affichée : scan et statut mis à jour, écran préservé
+                    // — un résultat d'arrière-plan ne referme jamais une
+                    // question (VISION), la réussite pas plus que l'échec.
+                    let question = triaging' () |> update' DeleteTandemRequested
+                    let freshScan = { emptyScan with OrganizedTandems = fixtureStems |> List.map tandem }
+
+                    let state = question |> update' (FolderScanned(1, fixtureFolderPath, freshScan))
+
+                    Expect.equal state.Screen (Confirming(Triaging, DeleteTandem "P1")) "la question reste affichée"
+                    Expect.equal state.Scan freshScan "le scan frais se met à jour sous la question"
+                    Expect.stringContains state.Status "déjà organisé" "le statut du scan frais remplace l'ancien"
+                }
+
+                test "a stale scan result while a question is displayed changes nothing" {
+                    // Résultat d'une demande dépassée pendant une question :
+                    // ni l'écran ni le scan ni le bandeau ne bougent.
+                    let question = triaging' () |> update' DeleteTandemRequested
+                    let staleScan = { emptyScan with TandemsToOrganize = [ tandem "PX" ] }
+
+                    let state = question |> update' (FolderScanned(0, fixtureFolderPath, staleScan))
+
+                    Expect.equal state.Screen (Confirming(Triaging, DeleteTandem "P1")) "la question reste affichée"
+                    Expect.equal state.Scan (triaging' ()).Scan "le scan ne bouge pas"
+                    Expect.equal state.Status question.Status "le bandeau ne bouge pas"
+                }
+
+                test "a late rescan result of an older request of the same folder is ignored" {
+                    // Le rafraîchissement suit la même règle que l'ouverture :
+                    // une demande dépassée du même dossier ne doit pas écraser
+                    // le scan frais (le chemin seul ne le voit pas).
+                    let freshScan = { emptyScan with OrganizedTandems = [ tandem "P1" ] }
+                    let staleScan = { emptyScan with TandemsToOrganize = [ tandem "P1" ] }
+
+                    let state =
+                        triaging' () // demande 1
+                        |> update' (FolderSelected fixtureFolderPath) // demande 2 : même dossier ré-ouvert
+                        |> update' (FolderRescanned(2, fixtureFolderPath, freshScan)) // rafraîchissement frais
+                        |> update' (FolderRescanned(1, fixtureFolderPath, staleScan)) // retard de la demande 1
+
+                    Expect.equal state.Scan freshScan "le résultat périmé de la demande 1 n'écrase rien"
+                }
+
+                test "a late rescan failure of an older request does not overwrite the status" {
+                    let state =
+                        triaging' () // demande 1
+                        |> update' (FolderSelected fixtureFolderPath) // demande 2 : analyse en cours
+                        |> update' (FolderRescanFailed(1, fixtureFolderPath, "acces refuse")) // échec tardif de la demande 1
+
+                    Expect.equal state.Status "Analyse du dossier…" "l'échec dépassé n'écrase pas le statut d'attente"
                 } ]
 
           testList
@@ -252,7 +367,7 @@ let stateTests =
                     let state =
                         init' ()
                         |> update' (FolderSelected fixtureFolderPath)
-                        |> update' (FolderScanned scan)
+                        |> update' (FolderScanned(1, fixtureFolderPath, scan))
                         |> update' OrganizeRequested
 
                     Expect.equal state.Screen (Working Organizing) "pas d'écran de confirmation"
@@ -281,7 +396,7 @@ let stateTests =
                     let organizingScreen =
                         init' ()
                         |> update' (FolderSelected fixtureFolderPath)
-                        |> update' (FolderScanned scan)
+                        |> update' (FolderScanned(1, fixtureFolderPath, scan))
 
                     Expect.equal organizingScreen.Screen (Working Organizing) "écran d'organisation"
                     Expect.stringContains organizingScreen.Status "mal cass" "la ligne orange signale l'anomalie"
@@ -420,7 +535,7 @@ let stateTests =
                     let state =
                         init' ()
                         |> update' (FolderSelected fixtureFolderPath)
-                        |> update' (FolderScanned scan)
+                        |> update' (FolderScanned(1, fixtureFolderPath, scan))
                         |> update' OrganizeRequested
                         |> update' (OrganizePlanned planFixture) // « Déplacer » : organisation en arrière-plan
                         |> update' OrganizeConfirmed
@@ -444,7 +559,7 @@ let stateTests =
                     let state =
                         init' ()
                         |> update' (FolderSelected fixtureFolderPath)
-                        |> update' (FolderScanned scan)
+                        |> update' (FolderScanned(1, fixtureFolderPath, scan))
                         |> update' OrganizeRequested
                         |> update' (OrganizePlanned planFixture)
                         |> update' OrganizeConfirmed // organisation en arrière-plan
@@ -467,7 +582,7 @@ let stateTests =
                     let state =
                         init' ()
                         |> update' (FolderSelected fixtureFolderPath)
-                        |> update' (FolderScanned scan)
+                        |> update' (FolderScanned(1, fixtureFolderPath, scan))
                         |> update' OrganizeRequested
                         |> update' (OrganizePlanned planFixture)
                         |> update' OrganizeConfirmed // organisation en arrière-plan
@@ -527,7 +642,7 @@ let stateTests =
                 let organizingWithDups () =
                     init' ()
                     |> update' (FolderSelected fixtureFolderPath)
-                    |> update' (FolderScanned dupScan)
+                    |> update' (FolderScanned(1, fixtureFolderPath, dupScan))
 
                 test "ResolveDuplicatesRequested opens a Confirming screen with the duplicate count" {
                     let state = organizingWithDups () |> update' ResolveDuplicatesRequested
@@ -607,7 +722,7 @@ let stateTests =
                     let state =
                         init' ()
                         |> update' (FolderSelected fixtureFolderPath)
-                        |> update' (FolderScanned scan)
+                        |> update' (FolderScanned(1, fixtureFolderPath, scan))
                         |> update' ResolveDuplicatesRequested // « Résoudre les 2 doublons »
                         |> update' ResolveDuplicatesConfirmed // « Résoudre » : tourne en arrière-plan
                         |> update' OrganizeRequested // il clique « Organiser » pendant ce temps
@@ -624,7 +739,7 @@ let stateTests =
                     let state =
                         init' ()
                         |> update' (FolderSelected fixtureFolderPath)
-                        |> update' (FolderScanned twinScan)
+                        |> update' (FolderScanned(1, fixtureFolderPath, twinScan))
                         |> update' ResolveDuplicatesRequested
 
                     Expect.equal state.Screen (Confirming(Organizing, ResolveDuplicates 1)) "le jumeau compte comme anomalie à résoudre"
@@ -675,7 +790,7 @@ let stateTests =
                 let organizingWithCaseMismatch () =
                     init' ()
                     |> update' (FolderSelected fixtureFolderPath)
-                    |> update' (FolderScanned caseMismatchScan)
+                    |> update' (FolderScanned(1, fixtureFolderPath, caseMismatchScan))
 
                 test "NormalizeRawFolderRequested opens a Confirming screen with the found name" {
                     let state = organizingWithCaseMismatch () |> update' NormalizeRawFolderRequested
@@ -746,7 +861,7 @@ let stateTests =
                     let state =
                         init' ()
                         |> update' (FolderSelected fixtureFolderPath)
-                        |> update' (FolderScanned scan)
+                        |> update' (FolderScanned(1, fixtureFolderPath, scan))
                         |> update' NormalizeRawFolderRequested // « Renommer « raw » en « RAW » »
                         |> update' NormalizeRawFolderConfirmed // « Renommer » : tourne en arrière-plan
                         |> update' StartTriagingClicked // il passe au tri pendant ce temps
@@ -942,7 +1057,7 @@ let stateTests =
                     // affiché est celui qui existe, pas une reconstruction.
                     // Dossier déjà organisé : le tri est affiché directement.
                     let scan = { emptyScan with OrganizedTandems = [ { Stem = "P2"; JpgFileName = "p2.JPG"; RawFileName = "P2.RW2" } ] }
-                    let state = init' () |> update' (FolderSelected fixtureFolderPath) |> update' (FolderScanned scan)
+                    let state = init' () |> update' (FolderSelected fixtureFolderPath) |> update' (FolderScanned(1, fixtureFolderPath, scan))
 
                     Expect.equal state.Screen (Working Triaging) "tri direct : le dossier n'a rien à organiser"
                     Expect.equal (currentJpgFileName state) (Some "p2.JPG") "la casse du scan est préservée"
@@ -950,7 +1065,7 @@ let stateTests =
 
                 test "currentJpgFileName is None when no tandem is triable" {
                     let scan = { emptyScan with OrphanJpgs = [ "PX.JPG" ] }
-                    let state = init' () |> update' (FolderSelected fixtureFolderPath) |> update' (FolderScanned scan)
+                    let state = init' () |> update' (FolderSelected fixtureFolderPath) |> update' (FolderScanned(1, fixtureFolderPath, scan))
 
                     Expect.equal state.Screen (Working Triaging) "tri direct : rien à remettre en ordre"
                     Expect.isNone (currentJpgFileName state) "aucune photo courante"
@@ -1048,7 +1163,7 @@ let stateTests =
                     let state =
                         init' ()
                         |> update' (FolderSelected fixtureFolderPath)
-                        |> update' (FolderScanned scan)
+                        |> update' (FolderScanned(1, fixtureFolderPath, scan))
                         |> update' StartTriagingClicked
                         |> (fun s -> { s with CurrentIndex = 3 })
                         |> update' DeleteTandemRequested
@@ -1147,7 +1262,7 @@ let stateTests =
                         |> update' DeleteTandemRequested
                         |> update' DeleteTandemConfirmed // suppression en arrière-plan
                         |> update' (FolderSelected fixtureFolderPath) // le même dossier est ré-ouvert
-                        |> update' (FolderScanned fixtureScan) // retour à l'écran d'organisation
+                        |> update' (FolderScanned(2, fixtureFolderPath, fixtureScan)) // retour à l'écran d'organisation
                         |> update' (DeleteTandemCompleted(fixtureFolderPath, fixtureStems.[0], deletionTrashed fixtureStems.[0]))
 
                     Expect.equal state.Screen (Working Organizing) "l'écran d'organisation reste"
@@ -1230,7 +1345,7 @@ let stateTests =
                     let state =
                         triaging' ()
                         |> update' (JpgLoaded(fixtureFolderPath, fixtureStems.[0], FakeImage()))
-                        |> update' (FolderScanned fixtureScan)
+                        |> update' (FolderScanned(1, fixtureFolderPath, fixtureScan))
 
                     Expect.isNone state.CurrentJpg "le nouveau dossier ne garde pas l'ancienne image en mémoire"
                 }
@@ -1239,7 +1354,7 @@ let stateTests =
                     let state =
                         triaging' ()
                         |> update' (JpgLoaded(fixtureFolderPath, fixtureStems.[0], FakeImage()))
-                        |> update' (FolderScanFailed "acces refuse")
+                        |> update' (FolderScanFailed(1, fixtureFolderPath, "acces refuse"))
 
                     Expect.isNone state.CurrentJpg "aucune image ne survit à un changement de dossier"
                 }
@@ -1266,7 +1381,7 @@ let stateTests =
                 let scanOfOtherFolder () =
                     triaging' ()
                     |> update' (FolderSelected otherFolderPath)
-                    |> update' (FolderScanned fixtureScan) // mêmes stems, dossier différent
+                    |> update' (FolderScanned(2, otherFolderPath, fixtureScan)) // mêmes stems, dossier différent
 
                 test "JpgLoaded from the previous folder is ignored after another folder is scanned" {
                     let state =
@@ -1291,7 +1406,7 @@ let stateTests =
                         |> update' DeleteTandemRequested
                         |> update' DeleteTandemConfirmed // suppression de l'ancien dossier, tourne en arrière-plan
                         |> update' (FolderSelected otherFolderPath)
-                        |> update' (FolderScanned fixtureScan) // le nouveau dossier a aussi un P1
+                        |> update' (FolderScanned(2, otherFolderPath, fixtureScan)) // le nouveau dossier a aussi un P1
                         |> update' (DeleteTandemCompleted(fixtureFolderPath, fixtureStems.[0], deletionTrashed fixtureStems.[0]))
 
                     Expect.equal state.Scan.TandemsToOrganize.Length fixtureStems.Length "le tandem du nouveau dossier n'est pas retiré : ses fichiers existent toujours"
