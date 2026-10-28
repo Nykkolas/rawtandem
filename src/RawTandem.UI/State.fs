@@ -65,22 +65,22 @@ type Msg =
     | FolderRescanned of requestId: int * folderPath: string * scan: FolderScan
     | FolderRescanFailed of requestId: int * folderPath: string * error: string
     | OrganizeRequested
-    | OrganizePlanned of plan: OrganizationPlan
-    | OrganizePlanningFailed of error: string
+    | OrganizePlanned of folderPath: string * plan: OrganizationPlan
+    | OrganizePlanningFailed of folderPath: string * error: string
     | OrganizeConfirmed
-    | OrganizeCompleted of outcome: MoveOutcome
-    | OrganizeNothingToMove
-    | OrganizeFailed of error: string
+    | OrganizeCompleted of folderPath: string * outcome: MoveOutcome
+    | OrganizeNothingToMove of folderPath: string
+    | OrganizeFailed of folderPath: string * error: string
     | OrganizeCancelled
     | ResolveDuplicatesRequested
     | ResolveDuplicatesConfirmed
-    | ResolveDuplicatesCompleted of outcome: MoveOutcome
-    | ResolveDuplicatesFailed of error: string
+    | ResolveDuplicatesCompleted of folderPath: string * outcome: MoveOutcome
+    | ResolveDuplicatesFailed of folderPath: string * error: string
     | ResolveDuplicatesCancelled
     | NormalizeRawFolderRequested
     | NormalizeRawFolderConfirmed
-    | NormalizeRawFolderCompleted
-    | NormalizeRawFolderFailed of error: string
+    | NormalizeRawFolderCompleted of folderPath: string
+    | NormalizeRawFolderFailed of folderPath: string * error: string
     | NormalizeRawFolderCancelled
     | StartTriagingClicked
     | PreviousClicked
@@ -93,7 +93,7 @@ type Msg =
     | DeleteTandemRequested
     | DeleteTandemConfirmed
     | DeleteTandemCompleted of folderPath: string * stem: string * outcome: DeletionOutcome
-    | DeleteTandemFailed of error: string
+    | DeleteTandemFailed of folderPath: string * stem: string * error: string
     | DeleteTandemCancelled
     | JpgLoaded of folderPath: string * stem: string * image: IImage
     | JpgLoadFailed of folderPath: string * stem: string * error: string
@@ -367,6 +367,45 @@ let private completedStatus (outcome: MoveOutcome) =
     if List.isEmpty parts then sprintf "%sRien à déplacer." SuccessStatusPrefix
     else sprintf "%s%s." SuccessStatusPrefix (String.concat ", " parts)
 
+/// Statut de synthèse d'une exécution de plan, réussite ou échec : le bandeau
+/// bas reflète toujours l'effet réel sur les fichiers.
+let private movesOutcomeStatus (outcome: MoveOutcome) =
+    if List.isEmpty outcome.Failed then
+        completedStatus outcome
+    else
+        let failedMove, failedReason = List.head outcome.Failed
+
+        sprintf
+            "%s%d déplacements effectués, %d en échec (ex. %s : %s)."
+            ErrorStatusPrefix
+            outcome.Moved.Length
+            outcome.Failed.Length
+            (Path.GetFileName failedMove.SourcePath)
+            failedReason
+
+/// Statut de synthèse d'une résolution de doublons, réussite ou échec.
+let private duplicatesOutcomeStatus (outcome: MoveOutcome) =
+    if List.isEmpty outcome.Failed then
+        sprintf "%s%d doublons et jumeaux de casse renommés et rangés." SuccessStatusPrefix outcome.Moved.Length
+    else
+        let failedMove, failedReason = List.head outcome.Failed
+
+        sprintf
+            "%s%d anomalies résolues, %d en échec (ex. %s : %s)."
+            ErrorStatusPrefix
+            outcome.Moved.Length
+            outcome.Failed.Length
+            (Path.GetFileName failedMove.SourcePath)
+            failedReason
+
+/// Vrai si un dossier autre que celui du résultat est affiché : le résultat
+/// arrive après un changement de dossier (l'opération tournait en arrière-plan).
+/// Il ne touche alors ni l'écran, ni le scan, ni l'index du dossier courant :
+/// seul le bandeau bas reflète l'effet réel, jamais avalé — un dossier sans
+/// dossier affiché (état incohérent) garde son comportement d'origine.
+let private resultIsFromAnotherFolder (state: State) (folderPath: string) =
+    state.FolderPath <> Some folderPath && state.FolderPath.IsSome
+
 let private updateCore (msg: Msg) (state: State) : State * Cmd<Msg> =
     match msg with
     | FolderSelected path ->
@@ -483,37 +522,49 @@ let private updateCore (msg: Msg) (state: State) : State * Cmd<Msg> =
                     | Some folder ->
                         // Le plan (File.Exists par déplacement) est calculé dans une
                         // commande asynchrone : update reste hors du thread d'I/O.
+                        // Le résultat embarque le dossier : un plan d'un dossier
+                        // quitté ne doit jamais ouvrir de question.
                         { state with Status = "Préparation du plan…" },
                         Cmd.OfAsync.either
                             (fun (folder, scan) -> async { return planOrganization folder scan })
                             (folder, state.Scan)
-                            OrganizePlanned
-                            (fun ex -> OrganizePlanningFailed ex.Message)
+                            (fun plan -> OrganizePlanned(folder, plan))
+                            (fun ex -> OrganizePlanningFailed(folder, ex.Message))
         | Working _ | Confirming _ -> state, Cmd.none
 
-    | OrganizePlanned plan ->
-        match state.Screen with
-        | Working Organizing ->
-            if List.isEmpty plan.Moves then
-                { state with Status = "Rien à remettre en ordre." }, Cmd.none
-            else
-                let rawMoves = plan.Moves |> List.filter (fun m -> m.Kind = RawToSubfolder) |> List.length
-                let jpgMoves = plan.Moves |> List.filter (fun m -> m.Kind = JpgToRoot) |> List.length
-
-                { state with
-                    Screen = Confirming(Organizing, OrganizeFolder(rawMoves, jpgMoves)) },
-                Cmd.none
-        | Working _ | Confirming _ ->
-            // L'utilisateur a quitté l'organisation : le plan est obsolète.
+    | OrganizePlanned(folderPath, plan) ->
+        if resultIsFromAnotherFolder state folderPath then
+            // Le plan appartient à un dossier quitté : aucune question ne
+            // s'ouvre pour des fichiers que l'utilisateur ne regarde plus.
             state, Cmd.none
+        else
+            match state.Screen with
+            | Working Organizing ->
+                if List.isEmpty plan.Moves then
+                    { state with Status = "Rien à remettre en ordre." }, Cmd.none
+                else
+                    let rawMoves = plan.Moves |> List.filter (fun m -> m.Kind = RawToSubfolder) |> List.length
+                    let jpgMoves = plan.Moves |> List.filter (fun m -> m.Kind = JpgToRoot) |> List.length
 
-    | OrganizePlanningFailed error ->
-        match state.Screen with
-        | Working Organizing ->
-            { state with
-                Status = sprintf "%sPréparation du plan impossible : %s" ErrorStatusPrefix error },
-            Cmd.none
-        | Working _ | Confirming _ -> state, Cmd.none
+                    { state with
+                        Screen = Confirming(Organizing, OrganizeFolder(rawMoves, jpgMoves)) },
+                    Cmd.none
+            | Working _ | Confirming _ ->
+                // L'utilisateur a quitté l'organisation : le plan est obsolète.
+                state, Cmd.none
+
+    | OrganizePlanningFailed(folderPath, error) ->
+        if resultIsFromAnotherFolder state folderPath then
+            // L'échec réel d'un dossier quitté reste annoncé, sans rien
+            // d'autre : l'écran et le scan du dossier courant ne bougent pas.
+            { state with Status = sprintf "%sPréparation du plan impossible : %s" ErrorStatusPrefix error }, Cmd.none
+        else
+            match state.Screen with
+            | Working Organizing ->
+                { state with
+                    Status = sprintf "%sPréparation du plan impossible : %s" ErrorStatusPrefix error },
+                Cmd.none
+            | Working _ | Confirming _ -> state, Cmd.none
 
     | OrganizeConfirmed ->
         match state.Screen with
@@ -536,56 +587,59 @@ let private updateCore (msg: Msg) (state: State) : State * Cmd<Msg> =
                         let plan = planOrganization folder scan
 
                         if List.isEmpty plan.Moves then
-                            return OrganizeNothingToMove
+                            return OrganizeNothingToMove folder
                         else
-                            return OrganizeCompleted(applyOrganization plan)
+                            return OrganizeCompleted(folder, applyOrganization plan)
                     })
                     state.Scan
                     id
-                    (fun ex -> OrganizeFailed ex.Message)
+                    (fun ex -> OrganizeFailed(folder, ex.Message))
         | Confirming _ | Working _ -> reportUnexpectedConfirmation state
 
-    | OrganizeCompleted outcome ->
-        // Les fichiers ont bougé : le scan en mémoire est périmé (les RAW
-        // déplacés y sont encore notés à la racine — bug du scan périmé,
-        // 2026-10-24, attrapé par le scénario organiser-et-trier-dossier). Le dossier est
-        // rafraîchi en arrière-plan, sans écran ni statut.
-        let refresh =
-            match state.FolderPath with
-            | Some folder -> rescanCmd state.ScanRequestId folder
-            | None -> Cmd.none
-
-        if List.isEmpty outcome.Failed then
-            // Passage automatique au tri seulement depuis l'écran d'organisation :
-            // une question en attente n'est jamais refermée par un résultat
-            // d'arrière-plan, la réussite pas plus que l'échec.
-            if state.Screen = Working Organizing then
-                let nextState = { state with Screen = Working Triaging; Status = completedStatus outcome }
-                nextState, loadCurrentJpgCmd nextState @ refresh
-            else
-                { state with Status = completedStatus outcome }, refresh
+    | OrganizeCompleted(folderPath, outcome) ->
+        if resultIsFromAnotherFolder state folderPath then
+            // L'organisation d'un dossier quitté s'est terminée : le bandeau
+            // seul reflète l'effet réel, ni l'écran ni le scan du dossier
+            // courant ne bougent, aucun rafraîchissement n'est lancé.
+            { state with Status = movesOutcomeStatus outcome }, Cmd.none
         else
-            let failedMove, failedReason = List.head outcome.Failed
+            // Les fichiers ont bougé : le scan en mémoire est périmé (les RAW
+            // déplacés y sont encore notés à la racine — bug du scan périmé,
+            // 2026-10-24, attrapé par le scénario organiser-et-trier-dossier). Le dossier est
+            // rafraîchi en arrière-plan, sans écran ni statut.
+            let refresh =
+                match state.FolderPath with
+                | Some folder -> rescanCmd state.ScanRequestId folder
+                | None -> Cmd.none
 
-            let status =
-                sprintf
-                    "%s%d déplacements effectués, %d en échec (ex. %s : %s)."
-                    ErrorStatusPrefix
-                    outcome.Moved.Length
-                    outcome.Failed.Length
-                    (Path.GetFileName failedMove.SourcePath)
-                    failedReason
+            if List.isEmpty outcome.Failed then
+                // Passage automatique au tri seulement depuis l'écran d'organisation :
+                // une question en attente n'est jamais refermée par un résultat
+                // d'arrière-plan, la réussite pas plus que l'échec.
+                if state.Screen = Working Organizing then
+                    let nextState = { state with Screen = Working Triaging; Status = movesOutcomeStatus outcome }
+                    nextState, loadCurrentJpgCmd nextState @ refresh
+                else
+                    { state with Status = movesOutcomeStatus outcome }, refresh
+            else
+                reportBackgroundFailure state (movesOutcomeStatus outcome), refresh
 
-            reportBackgroundFailure state status, refresh
-
-    | OrganizeNothingToMove ->
-        match state.Screen with
-        | Working Organizing ->
+    | OrganizeNothingToMove(folderPath) ->
+        if resultIsFromAnotherFolder state folderPath then
             { state with Status = "Rien à déplacer : le dossier a changé entre-temps." }, Cmd.none
-        | Working _ | Confirming _ -> state, Cmd.none
+        else
+            match state.Screen with
+            | Working Organizing ->
+                { state with Status = "Rien à déplacer : le dossier a changé entre-temps." }, Cmd.none
+            | Working _ | Confirming _ -> state, Cmd.none
 
-    | OrganizeFailed error ->
-        reportBackgroundFailure state (sprintf "%sOrganisation impossible : %s" ErrorStatusPrefix error), Cmd.none
+    | OrganizeFailed(folderPath, error) ->
+        if resultIsFromAnotherFolder state folderPath then
+            // L'échec d'un dossier quitté ne ramène personne à l'écran
+            // d'organisation : il est annoncé dans le bandeau, c'est tout.
+            { state with Status = sprintf "%sOrganisation impossible : %s" ErrorStatusPrefix error }, Cmd.none
+        else
+            reportBackgroundFailure state (sprintf "%sOrganisation impossible : %s" ErrorStatusPrefix error), Cmd.none
 
     | OrganizeCancelled ->
         match state.Screen with
@@ -628,37 +682,31 @@ let private updateCore (msg: Msg) (state: State) : State * Cmd<Msg> =
                 Cmd.OfAsync.either
                     (fun scan -> async {
                         let plan = planDuplicateResolution folder scan
-                        return ResolveDuplicatesCompleted(applyOrganization plan)
+                        return ResolveDuplicatesCompleted(folder, applyOrganization plan)
                     })
                     state.Scan
                     id
-                    (fun ex -> ResolveDuplicatesFailed ex.Message)
+                    (fun ex -> ResolveDuplicatesFailed(folder, ex.Message))
         | Confirming _ | Working _ -> reportUnexpectedConfirmation state
 
-    | ResolveDuplicatesCompleted outcome ->
-        match state.Screen with
-        | Working Organizing | Confirming(Organizing, _) ->
-            if List.isEmpty outcome.Failed then
-                { state with
-                    Status = sprintf "%s%d doublons et jumeaux de casse renommés et rangés." SuccessStatusPrefix outcome.Moved.Length },
-                Cmd.none
-            else
-                let failedMove, failedReason = List.head outcome.Failed
+    | ResolveDuplicatesCompleted(folderPath, outcome) ->
+        if resultIsFromAnotherFolder state folderPath then
+            // La résolution d'un dossier quitté s'est terminée : le bandeau
+            // seul reflète l'effet réel, rien ne bouge pour le dossier courant.
+            { state with Status = duplicatesOutcomeStatus outcome }, Cmd.none
+        else
+            match state.Screen with
+            | Working Organizing | Confirming(Organizing, _) ->
+                { state with Status = duplicatesOutcomeStatus outcome }, Cmd.none
+            | Working _ | Confirming _ -> state, Cmd.none
 
-                { state with
-                    Status =
-                        sprintf
-                            "%s%d anomalies résolues, %d en échec (ex. %s : %s)."
-                            ErrorStatusPrefix
-                            outcome.Moved.Length
-                            outcome.Failed.Length
-                            (Path.GetFileName failedMove.SourcePath)
-                            failedReason },
-                Cmd.none
-        | Working _ | Confirming _ -> state, Cmd.none
-
-    | ResolveDuplicatesFailed error ->
-        reportBackgroundFailure state (sprintf "%sRésolution des doublons impossible : %s" ErrorStatusPrefix error), Cmd.none
+    | ResolveDuplicatesFailed(folderPath, error) ->
+        if resultIsFromAnotherFolder state folderPath then
+            // L'échec d'un dossier quitté est annoncé dans le bandeau, sans
+            // éjecter l'utilisateur de l'écran courant.
+            { state with Status = sprintf "%sRésolution des doublons impossible : %s" ErrorStatusPrefix error }, Cmd.none
+        else
+            reportBackgroundFailure state (sprintf "%sRésolution des doublons impossible : %s" ErrorStatusPrefix error), Cmd.none
 
     | ResolveDuplicatesCancelled ->
         match state.Screen with
@@ -697,29 +745,40 @@ let private updateCore (msg: Msg) (state: State) : State * Cmd<Msg> =
                 Cmd.OfAsync.either
                     (fun name -> async {
                         do normalizeRawFolderName folder name
-                        return NormalizeRawFolderCompleted
+                        return NormalizeRawFolderCompleted folder
                     })
                     foundName
                     id
-                    (fun ex -> NormalizeRawFolderFailed ex.Message)
+                    (fun ex -> NormalizeRawFolderFailed(folder, ex.Message))
         | Confirming _ | Working _ -> reportUnexpectedConfirmation state
 
-    | NormalizeRawFolderCompleted ->
-        // Le scan est obsolète : le contenu du dossier renommé devient visible.
-        match state.FolderPath with
-        | Some folder ->
-            { state with
-                Screen = Working Organizing
-                Status = sprintf "%sDossier renommé en « %s », nouvelle analyse…" SuccessStatusPrefix RawSubfolderName },
-            scanCmd state.ScanRequestId folder
-        | None ->
-            { state with
-                Screen = Working Organizing
-                Status = sprintf "%sDossier renommé en « %s »." SuccessStatusPrefix RawSubfolderName },
-            Cmd.none
+    | NormalizeRawFolderCompleted(folderPath) ->
+        if resultIsFromAnotherFolder state folderPath then
+            // Le renommage réel d'un dossier quitté reste annoncé dans le
+            // bandeau : sans écran imposé, sans re-analyse — le dossier
+            // affiché n'est pas concerné.
+            { state with Status = sprintf "%sDossier renommé en « %s »." SuccessStatusPrefix RawSubfolderName }, Cmd.none
+        else
+            // Le scan est obsolète : le contenu du dossier renommé devient visible.
+            match state.FolderPath with
+            | Some folder ->
+                { state with
+                    Screen = Working Organizing
+                    Status = sprintf "%sDossier renommé en « %s », nouvelle analyse…" SuccessStatusPrefix RawSubfolderName },
+                scanCmd state.ScanRequestId folder
+            | None ->
+                { state with
+                    Screen = Working Organizing
+                    Status = sprintf "%sDossier renommé en « %s »." SuccessStatusPrefix RawSubfolderName },
+                Cmd.none
 
-    | NormalizeRawFolderFailed error ->
-        reportBackgroundFailure state (sprintf "%sRenommage impossible : %s" ErrorStatusPrefix error), Cmd.none
+    | NormalizeRawFolderFailed(folderPath, error) ->
+        if resultIsFromAnotherFolder state folderPath then
+            // L'échec d'un dossier quitté est annoncé dans le bandeau, sans
+            // éjecter l'utilisateur de l'écran courant.
+            { state with Status = sprintf "%sRenommage impossible : %s" ErrorStatusPrefix error }, Cmd.none
+        else
+            reportBackgroundFailure state (sprintf "%sRenommage impossible : %s" ErrorStatusPrefix error), Cmd.none
 
     | NormalizeRawFolderCancelled ->
         match state.Screen with
@@ -852,7 +911,7 @@ let private updateCore (msg: Msg) (state: State) : State * Cmd<Msg> =
                         })
                         (tandem, rawLocation)
                         id
-                        (fun ex -> DeleteTandemFailed ex.Message)
+                        (fun ex -> DeleteTandemFailed(folder, stem, ex.Message))
         | Confirming _ | Working _ -> reportUnexpectedConfirmation state
 
     | DeleteTandemCompleted(folder, stem, outcome) ->
@@ -898,8 +957,13 @@ let private updateCore (msg: Msg) (state: State) : State * Cmd<Msg> =
                         failedReason },
             Cmd.none
 
-    | DeleteTandemFailed error ->
-        { state with Status = sprintf "%sSuppression impossible : %s" ErrorStatusPrefix error }, Cmd.none
+    | DeleteTandemFailed(_, stem, error) ->
+        // Le dossier et le stem voyagent avec l'échec : l'utilisateur sait
+        // quelle photo n'a pas pu partir à la corbeille (règle VISION :
+        // un échec n'est jamais avalé, quel que soit le dossier affiché).
+        { state with
+            Status = sprintf "%sSuppression de %s impossible : %s" ErrorStatusPrefix stem error },
+        Cmd.none
 
     // ---------- Affichage du JPG courant ----------
 
