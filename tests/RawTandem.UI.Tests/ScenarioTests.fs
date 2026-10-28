@@ -7,12 +7,16 @@ open System.Threading
 open Expecto
 open Elmish
 open Avalonia
+open Avalonia.Controls
 open Avalonia.FuncUI.Hosts
 open Avalonia.Headless
 open Avalonia.Media.Imaging
+open Avalonia.VisualTree
 open SkiaSharp
 open RawTandem.Core.Constants
 open RawTandem.Core.Exif
+open RawTandem.Core.FolderScan
+open RawTandem.Core.Tandems
 open RawTandem.UI.State
 
 /// Point d'entrée de la session headless : un type avec BuildAvaloniaApp,
@@ -309,6 +313,50 @@ let private renderPhoto (state: State) : RenderedPhoto option =
         )
         .GetAwaiter()
         .GetResult()
+
+// ========== RC-05 : bandeau jaune modal (vraie vue rendue) ==========
+
+/// Boutons de la vraie vue rendue pour l'état donné : (libellé, activé).
+/// Même matérialisation que renderPhoto (HostControl + Skia headless) : le
+/// test de RC-05 s'appuie sur la vue réellement rendue, pas sur un recalcul.
+/// Les boutons à icône (plein écran) n'ont pas de libellé texte — c'est leur
+/// état d'activation qui compte, le nom du type sert d'identifiant.
+let private renderedButtons (state: State) : (string * bool) list =
+    headlessSession
+        .Dispatch(
+            Func<(string * bool) list>(fun () ->
+                let host = HostControl()
+                (host :> IViewHost).Update(Some(Main.view state ignore))
+
+                let root = host.Content :?> Control
+                root.Measure(Size(900.0, 640.0))
+                root.Arrange(Rect(0.0, 0.0, 900.0, 640.0))
+
+                root.GetVisualDescendants()
+                |> Seq.choose (fun descendant ->
+                    match descendant with
+                    | :? Button as button -> Some(string button.Content, button.IsEnabled)
+                    | _ -> None)
+                |> List.ofSeq),
+            CancellationToken.None
+        )
+        .GetAwaiter()
+        .GetResult()
+
+/// État d'affichage minimal : la vue ne lit pas le disque, l'état suffit
+/// (la machine est testée ailleurs — ici on teste le mapping sémantique →
+/// pixels du bandeau modal, RC-05).
+let private displayState (screen: Screen) : State =
+    { Screen = screen
+      FolderPath = Some "/dossier-fixture-rawtandem-inexistant"
+      ScanRequestId = 1
+      Scan =
+        { emptyScan with
+            TandemsToOrganize = [ { Stem = "P1"; JpgFileName = "P1.JPG"; RawFileName = "P1.RW2" } ] }
+      CurrentIndex = 0
+      DisplayMode = Normal
+      CurrentJpg = None
+      Status = "" }
 
 /// Scénario exécutable de docs/usecases/organiser-et-trier-dossier.md.
 ///
@@ -698,4 +746,60 @@ let scenarioTests =
 
                 if not (Object.ReferenceEquals(source, result)) then
                     source.Dispose()
+        }
+
+        // ---------- RC-05 : bandeau jaune modal (docs/usecases/regles-communes.md) ----------
+
+        test "RC-05 common rule : organizing actions are grayed while the question is displayed" {
+            // Pendant une question, tout geste de l'écran sous-jacent est un
+            // no-op gardé dans update — il doit aussi se voir : bouton grisé,
+            // jamais de clic mort en silence. Seuls Déplacer / Annuler restent
+            // actifs.
+            let buttons = renderedButtons (displayState (Confirming(Organizing, OrganizeFolder(1, 0))))
+
+            let outsideQuestion =
+                buttons
+                |> List.filter (fun (label, _) -> label <> "Déplacer" && label <> "Annuler")
+
+            Expect.isFalse
+                (outsideQuestion |> List.exists snd)
+                "aucune action hors question n'est active (Organiser, Résoudre, Passer au tri, dossier, renommage)"
+
+            Expect.isTrue
+                (buttons |> List.exists (fun (label, enabled) -> label = "Déplacer" && enabled))
+                "Déplacer reste actif : la question doit pouvoir être acceptée"
+
+            Expect.isTrue
+                (buttons |> List.exists (fun (label, enabled) -> label = "Annuler" && enabled))
+                "Annuler reste actif : la question doit pouvoir être refusée"
+        }
+
+        test "RC-05 common rule : triage actions are grayed while a deletion question is displayed" {
+            let buttons = renderedButtons (displayState (Confirming(Triaging, DeleteTandem "P1")))
+
+            let outsideQuestion =
+                buttons
+                |> List.filter (fun (label, _) -> label <> "Supprimer" && label <> "Annuler")
+
+            Expect.isFalse
+                (outsideQuestion |> List.exists snd)
+                "aucune action hors question n'est active (flèches, suppression, plein écran, dossier)"
+
+            Expect.isTrue
+                (buttons |> List.exists (fun (label, enabled) -> label = "Supprimer" && enabled))
+                "Supprimer reste actif"
+
+            Expect.isTrue
+                (buttons |> List.exists (fun (label, enabled) -> label = "Annuler" && enabled))
+                "Annuler reste actif"
+        }
+
+        test "RC-05 common rule : actions come back when no question is displayed" {
+            // Santé du grisage : hors question, les actions ne doivent pas
+            // rester grisées par erreur.
+            let buttons = renderedButtons (displayState (Working Organizing))
+
+            Expect.isTrue
+                (buttons |> List.exists (fun (label, enabled) -> label.StartsWith "Organiser" && enabled))
+                "Organiser est actif hors question"
         } ]

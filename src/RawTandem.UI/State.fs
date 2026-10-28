@@ -121,6 +121,16 @@ let fixableCount (scan: FolderScan) =
     + scan.InvertedTandems.Length
     + scan.OrphanJpgsInRaw.Length
 
+/// Vrai quand une question est affichée (bandeau jaune) : les gestes de
+/// l'écran sous-jacent sont sans effet tant qu'elle n'est pas tranchée
+/// (règle VISION — la garde vit dans `update`, elle seule fait autorité).
+/// Modèle de vue : la vue s'en sert pour griser les actions, l'affordance
+/// accompagne la garde sans jamais la remplacer.
+let isQuestionPending (state: State) =
+    match state.Screen with
+    | Confirming _ -> true
+    | Working _ -> false
+
 /// Tandems visibles dans le tri : tous ceux dont le JPG est à la racine.
 let triableTandems (state: State) =
     state.Scan.TandemsToOrganize @ state.Scan.OrganizedTandems

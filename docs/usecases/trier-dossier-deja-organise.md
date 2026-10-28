@@ -16,7 +16,7 @@ minimal guarantee: aucun fichier n'est effacé, tout est récupérable
 3. L'utilisateur navigue dans les photos JPG affichées à l'écran (cf RC-01)
 4. L'application affiche la photo en cours et le nom du fichier (XXXX.JPG)
 5. L'utilisateur demande la suppression d'une photo
-6. L'application demande à confirmer la suppression en affichant les noms des fichiers du tandem (XXXX.JPG + XXXX.RW2) à supprimer (cf RC-02)
+6. L'application demande à confirmer la suppression en affichant les noms des fichiers du tandem (XXXX.JPG + XXXX.RW2) à supprimer (cf RC-02) (RC-05)
 7. L'utilisateur confirme 
 8. Les fichiers JPG et RW2 sont envoyés vers la corbeille  (RC-03)
 9. L'utilisateur répète les étapes 3 à 8 jusqu'à ce qu'il n'y ait plus de photo à supprimer

@@ -1199,6 +1199,19 @@ let stateTests =
               [ // Fonctions pures State -> sémantique de présentation (TODO
                 // « modèle de vue ») : la vue ne garde que le mapping
                 // sémantique -> pixels, le testable vit ici.
+                test "isQuestionPending is true only while a question is displayed" {
+                    // Bandeau modal : les gestes de l'écran sous-jacent sont
+                    // sans effet tant que la question n'est pas tranchée —
+                    // la vue s'en sert pour griser les actions.
+                    let working = organizing' ()
+                    let question = confirming' ()
+                    let answered = question |> update' OrganizeCancelled
+
+                    Expect.isFalse (isQuestionPending working) "pas de question : actions libres"
+                    Expect.isTrue (isQuestionPending question) "question affichée : actions grisées"
+                    Expect.isFalse (isQuestionPending answered) "question tranchée : les actions reviennent"
+                }
+
                 test "currentJpgFileName exposes the scanned name of the current tandem" {
                     let state = triaging' () |> update' NextClicked
                     Expect.equal (currentJpgFileName state) (Some "P2.JPG") "nom du fichier JPG courant, index 1"

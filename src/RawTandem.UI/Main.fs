@@ -50,17 +50,12 @@ let private pickFolder (source: obj) (dispatch: Msg -> unit) : Async<unit> =
 /// La navigation vers un autre dossier est proposée sur chaque écran où un
 /// dossier est actif, mais jamais pendant qu'une question est affichée :
 /// la question doit être tranchée d'abord (jamais refermée à la place de
-/// l'utilisateur, cf. règle de VISION sur les confirmations).
-let private canOpenAnotherFolder (state: State) =
-    match state.Screen with
-    | Confirming _ -> false
-    | Working _ -> true
-
-/// Bouton standard « Ouvrir un autre dossier… », identique sur tous les écrans.
+/// l'utilisateur, cf. règle de VISION sur les confirmations). Bandeau
+/// modal : le grisage est l'affordance de la garde qui vit dans `update`.
 let private openAnotherFolderButton (state: State) (dispatch: Msg -> unit) : Types.IView =
     Button.create [
         Button.content "Ouvrir un autre dossier…"
-        Button.isEnabled (canOpenAnotherFolder state)
+        Button.isEnabled (not (isQuestionPending state))
         Button.onClick (fun args -> pickFolder args.Source dispatch |> Async.StartImmediate)
     ] :> Types.IView
 
@@ -325,11 +320,16 @@ let private organizingView (state: State) (dispatch: Msg -> unit) =
         plannedCount = 0
         || scan.RawFolderIssue.IsSome
 
+    // Bandeau modal : pendant une question, toute action de l'écran est un
+    // no-op gardé dans update — elle se voit grisée, jamais de clic mort.
+    let questionPending = isQuestionPending state
+
     let renameButton : Types.IView list =
         match scan.RawFolderIssue with
         | Some (RawFolderCaseMismatch foundName) ->
             [ Button.create [
                   Button.content (sprintf "Renommer « %s » en « %s »" foundName RawSubfolderName)
+                  Button.isEnabled (not questionPending)
                   Button.onClick (fun _ -> dispatch NormalizeRawFolderRequested)
               ] :> Types.IView ]
         | _ -> []
@@ -337,17 +337,18 @@ let private organizingView (state: State) (dispatch: Msg -> unit) =
     let actionViews : Types.IView list =
         ([ Button.create [
               Button.content (sprintf "Organiser (%d déplacements)" plannedCount)
-              Button.isEnabled (not organizeDisabled)
+              Button.isEnabled (not organizeDisabled && not questionPending)
               Button.onClick (fun _ -> dispatch OrganizeRequested)
            ] :> Types.IView
            Button.create [
                Button.content (sprintf "Résoudre les %d doublons et jumeaux de casse (renommage)" duplicates)
-               Button.isEnabled (duplicates > 0)
+               Button.isEnabled (duplicates > 0 && not questionPending)
                Button.onClick (fun _ -> dispatch ResolveDuplicatesRequested)
            ] :> Types.IView ]
          @ renameButton
          @ [ Button.create [
                 Button.content "Passer directement au tri"
+                Button.isEnabled (not questionPending)
                 Button.onClick (fun _ -> dispatch StartTriagingClicked)
             ] :> Types.IView ])
 
@@ -360,6 +361,9 @@ let private organizingView (state: State) (dispatch: Msg -> unit) =
 let private triagingView (state: State) (dispatch: Msg -> unit) =
     let visibleTandems = triableTandems state
     let photoCount = visibleTandems.Length
+    // Bandeau modal : pendant une question, toute action de l'écran est un
+    // no-op gardé dans update — elle se voit grisée, jamais de clic mort.
+    let questionPending = isQuestionPending state
     // Nom du fichier JPG courant, tel que scanné (casse d'origine) : affiché
     // dans la barre de navigation — UC organiser-et-trier-dossier étape 8,
     // trier-dossier-deja-organise étape 4.
@@ -385,7 +389,7 @@ let private triagingView (state: State) (dispatch: Msg -> unit) =
                     Button.create [
                         Button.dock Dock.Left
                         Button.margin (Thickness(20.0, 12.0, 0.0, 0.0))
-                        Button.isEnabled (canOpenAnotherFolder state)
+                        Button.isEnabled (not (isQuestionPending state))
                         Button.onClick (fun args -> pickFolder args.Source dispatch |> Async.StartImmediate)
                         Button.content "Ouvrir un autre dossier…"
                     ]
@@ -431,7 +435,7 @@ let private triagingView (state: State) (dispatch: Msg -> unit) =
                         Button.fontSize 16.0
                         Button.padding (Thickness(16.0, 8.0))
                         Button.margin (Thickness(0.0, 0.0, 0.0, 12.0))
-                        Button.isEnabled (photoCount > 0)
+                        Button.isEnabled (photoCount > 0 && not questionPending)
                         Button.onClick (fun _ -> dispatch DeleteTandemRequested)
                     ]
                     Button.create [
@@ -441,6 +445,7 @@ let private triagingView (state: State) (dispatch: Msg -> unit) =
                         Button.margin (Thickness(0.0, 0.0, 20.0, 12.0))
                         Button.padding (Thickness(10.0))
                         Button.tip "Plein écran (F)"
+                        Button.isEnabled (not questionPending)
                         Button.onClick (fun _ -> dispatch FullscreenRequested)
                         Button.content fullscreenIcon
                     ]
@@ -455,7 +460,7 @@ let private triagingView (state: State) (dispatch: Msg -> unit) =
                 Button.fontSize 22.0
                 Button.content "◄"
                 Button.tip "Photo précédente (←)"
-                Button.isEnabled (state.CurrentIndex > 0)
+                Button.isEnabled (state.CurrentIndex > 0 && not questionPending)
                 Button.onClick (fun _ -> dispatch PreviousClicked)
             ]
             Button.create [
@@ -465,7 +470,7 @@ let private triagingView (state: State) (dispatch: Msg -> unit) =
                 Button.fontSize 22.0
                 Button.content "►"
                 Button.tip "Photo suivante (→)"
-                Button.isEnabled (state.CurrentIndex < photoCount - 1)
+                Button.isEnabled (state.CurrentIndex < photoCount - 1 && not questionPending)
                 Button.onClick (fun _ -> dispatch NextClicked)
             ]
             Border.create [
