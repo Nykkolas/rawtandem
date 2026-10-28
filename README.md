@@ -33,3 +33,8 @@ reportgenerator -reports:"tests/*/TestResults/*/coverage.cobertura.xml" -targetd
 
 Stack : F#, Avalonia.FuncUI + Elmish (UI), domaine pur dans `src/RawTandem.Core`,
 tests Expecto dans `tests/` en miroir (exécution via `dotnet test`, couverture coverlet).
+
+## IA
+Application développée avec IA Mistral (Vibe Code)
+Use Cases et Règles communes écrites par un humain
+Tests de ces scénarios (ScenarioTests.fs), relus et validés par un humain
