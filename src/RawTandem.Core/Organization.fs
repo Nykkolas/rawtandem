@@ -58,47 +58,18 @@ let private plannedMove kind (sourceDir: string) (fileName: string) (targetDir: 
           TargetPath = directTarget
           TargetRenamed = false }
 
-/// Plan de remise en ordre d'un dossier : les RAW de la racine (appariés ou
-/// orphelins) rejoignent le sous-dossier RAW/, les JPG du sous-dossier
-/// (tandems croisés, inversés, orphelins) rejoignent la racine. Les cibles
-/// déjà prises ne sont jamais écrasées : renommage système de secours.
+/// Plan de rangement (option A : signaler, jamais réparer) : seuls les RAW
+/// des **couples appariés** de la racine rejoignent le sous-dossier RAW/.
+/// Orphelins, croisés, inversés, doublons et jumeaux de casse sont signalés
+/// par le panneau « À corriger vous-même » — l'application ne les touche
+/// jamais, l'utilisateur les corrige lui-même puis réanalyse. Les cibles déjà
+/// prises ne sont jamais écrasées : renommage système de secours.
 let planOrganization (folderPath: string) (scan: FolderScan) : OrganizationPlan =
     let rawDir = Path.Combine(folderPath, RawSubfolderName)
 
     let moves =
-        [ // RAW de la racine → RAW/ : tandems à organiser puis RAW orphelins.
-          for t in scan.TandemsToOrganize do
-              plannedMove RawToSubfolder folderPath t.RawFileName rawDir
-          for fileName in scan.OrphanRawsToOrganize do
-              plannedMove RawToSubfolder folderPath fileName rawDir
-          // Croisés : le JPG de RAW/ → racine, le RAW de la racine → RAW/.
-          for t in scan.CrossedTandems do
-              plannedMove JpgToRoot rawDir t.JpgFileName folderPath
-              plannedMove RawToSubfolder folderPath t.RawFileName rawDir
-          // Inversés et orphelins JPG de RAW/ : le JPG → racine.
-          for t in scan.InvertedTandems do
-              plannedMove JpgToRoot rawDir t.JpgFileName folderPath
-          for fileName in scan.OrphanJpgsInRaw do
-              plannedMove JpgToRoot rawDir fileName folderPath ]
-
-    { RawDirectoryPath = rawDir; Moves = moves }
-
-/// Plan de résolution des anomalies de noms : les doublons (fichier hors de sa
-/// place) rejoignent leur place, les jumeaux de casse (même stem et extension
-/// dans un même répertoire) sont renommés — selon la convention du système
-/// (« stem (1).ext », incrémenté jusqu'au premier nom libre). Aucun fichier
-/// n'est détruit ni écrasé.
-let planDuplicateResolution (folderPath: string) (scan: FolderScan) : OrganizationPlan =
-    let rawDir = Path.Combine(folderPath, RawSubfolderName)
-
-    let moves =
-        [ for fileName in scan.DuplicateRaws do
-              plannedMove RawToSubfolder folderPath fileName rawDir
-          for fileName in scan.DuplicateJpgs do
-              plannedMove JpgToRoot rawDir fileName folderPath
-          for collision in scan.CaseCollisions do
-              let home = if collision.InRawSubfolder then rawDir else folderPath
-              plannedMove RenameInPlace home collision.FileName home ]
+        [ for t in scan.TandemsToOrganize do
+              plannedMove RawToSubfolder folderPath t.RawFileName rawDir ]
 
     { RawDirectoryPath = rawDir; Moves = moves }
 
@@ -123,14 +94,3 @@ let applyOrganization (plan: OrganizationPlan) : MoveOutcome =
 
         { Moved = results |> List.choose (fun r -> match r with Ok m -> Some m | Error _ -> None)
           Failed = results |> List.choose (fun r -> match r with Error f -> Some f | Ok _ -> None) }
-
-/// Renomme un dossier RAW mal cassé (ex. « raw ») en « RAW ». Refusé si
-/// « RAW » existe déjà (dossier ou fichier) : l'appelant doit lever l'anomalie
-/// avec l'utilisateur d'abord.
-let normalizeRawFolderName (folderPath: string) (currentName: string) =
-    let rawPath = Path.Combine(folderPath, RawSubfolderName)
-
-    if Directory.Exists(rawPath) || File.Exists(rawPath) then
-        invalidOp "Cannot normalize the RAW folder name: a RAW entry already exists"
-    else
-        Directory.Move(Path.Combine(folderPath, currentName), rawPath)

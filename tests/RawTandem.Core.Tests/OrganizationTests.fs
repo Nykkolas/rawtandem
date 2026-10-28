@@ -42,22 +42,46 @@ let organizationTests =
               Expect.equal plan.RawDirectoryPath (Path.Combine(folder, RawSubfolderName)) "chemin du sous-dossier"
           }
 
-          test "planOrganization also moves orphan RAWs from the root" {
+          test "planOrganization leaves orphan RAWs at the root (signaled, never moved)" {
+              // Option A : signaler, jamais réparer — le panneau « À corriger
+              // vous-même » annonce que l'application ne touchera pas les
+              // fichiers non appariés ; le plan doit tenir cette promesse.
               let folder = tempFolder ()
 
               let plan =
                   planOrganization folder { emptyScan with OrphanRawsToOrganize = [ "P2.RW2" ] }
 
+              Expect.isEmpty plan.Moves "le RAW orphelin reste à la racine : signalé, jamais déplacé"
+          }
+
+          test "planOrganization moves only the RAWs of appaired tandems" {
+              let folder = tempFolder ()
+
+              let tandem stem : Tandem = { Stem = stem; JpgFileName = stem + ".JPG"; RawFileName = stem + ".RW2" }
+
+              let plan =
+                  planOrganization
+                      folder
+                      { emptyScan with
+                          TandemsToOrganize = [ tandem "P1"; tandem "P2" ]
+                          OrphanRawsToOrganize = [ "P9.RW2" ]
+                          InvertedTandems = [ tandem "P3" ]
+                          CrossedTandems = [ tandem "P4" ] }
+
               Expect.equal
                   plan.Moves
                   [ { Kind = RawToSubfolder
+                      SourcePath = Path.Combine(folder, "P1.RW2")
+                      TargetPath = Path.Combine(folder, RawSubfolderName, "P1.RW2")
+                      TargetRenamed = false }
+                    { Kind = RawToSubfolder
                       SourcePath = Path.Combine(folder, "P2.RW2")
                       TargetPath = Path.Combine(folder, RawSubfolderName, "P2.RW2")
                       TargetRenamed = false } ]
-                  "le RAW orphelin rejoint le sous-dossier"
+                  "seuls les RAW des couples appariés sont déplacés"
           }
 
-          test "planOrganization moves JPGs from the subfolder back to the root" {
+          test "planOrganization leaves crossed, inverted and orphan JPGs in place (signaled, never moved)" {
               let folder = tempFolder ()
 
               let plan =
@@ -68,25 +92,7 @@ let organizationTests =
                           CrossedTandems = [ { Stem = "P4"; JpgFileName = "P4.JPG"; RawFileName = "P4.RW2" } ]
                           OrphanJpgsInRaw = [ "P5.JPG" ] }
 
-              Expect.equal
-                  plan.Moves
-                  [ { Kind = JpgToRoot
-                      SourcePath = Path.Combine(folder, RawSubfolderName, "P4.JPG")
-                      TargetPath = Path.Combine(folder, "P4.JPG")
-                      TargetRenamed = false }
-                    { Kind = RawToSubfolder
-                      SourcePath = Path.Combine(folder, "P4.RW2")
-                      TargetPath = Path.Combine(folder, RawSubfolderName, "P4.RW2")
-                      TargetRenamed = false }
-                    { Kind = JpgToRoot
-                      SourcePath = Path.Combine(folder, RawSubfolderName, "P3.JPG")
-                      TargetPath = Path.Combine(folder, "P3.JPG")
-                      TargetRenamed = false }
-                    { Kind = JpgToRoot
-                      SourcePath = Path.Combine(folder, RawSubfolderName, "P5.JPG")
-                      TargetPath = Path.Combine(folder, "P5.JPG")
-                      TargetRenamed = false } ]
-                  "croisés d'abord (JPG → racine puis RAW → RAW/), puis inversés et orphelins JPG → racine"
+              Expect.isEmpty plan.Moves "croisés, inversés et orphelins JPG : signalés, jamais déplacés"
           }
 
           test "planOrganization on an already organized scan plans nothing" {
@@ -207,95 +213,4 @@ let organizationTests =
               Expect.isEmpty outcome.Failed "aucun échec"
               Expect.isFalse (Directory.Exists(Path.Combine(folder, RawSubfolderName))) "aucun dossier créé"
           }
-
-          // ---------- planDuplicateResolution ----------
-
-          test "planDuplicateResolution renames the out-of-place RAW copy into the subfolder" {
-              let folder = tempFolder ()
-              let raw = rawDir folder
-              touch folder "P1.RW2"
-              touch raw "P1.RW2"
-
-              let plan = planDuplicateResolution folder { emptyScan with DuplicateRaws = [ "P1.RW2" ] }
-
-              Expect.equal
-                  plan.Moves
-                  [ { Kind = RawToSubfolder
-                      SourcePath = Path.Combine(folder, "P1.RW2")
-                      TargetPath = Path.Combine(raw, "P1 (1).RW2")
-                      TargetRenamed = true } ]
-                  "le doublon racine rejoint le sous-dossier, renommé selon la convention système"
-          }
-
-          test "planDuplicateResolution renames the out-of-place JPG copy back to the root" {
-              let folder = tempFolder ()
-              let raw = rawDir folder
-              touch folder "P1.JPG"
-              touch raw "P1.JPG"
-
-              let plan = planDuplicateResolution folder { emptyScan with DuplicateJpgs = [ "P1.JPG" ] }
-
-              Expect.equal
-                  plan.Moves
-                  [ { Kind = JpgToRoot
-                      SourcePath = Path.Combine(raw, "P1.JPG")
-                      TargetPath = Path.Combine(folder, "P1 (1).JPG")
-                      TargetRenamed = true } ]
-                  "le doublon de RAW/ rejoint la racine, renommé"
-          }
-
-          test "planDuplicateResolution renames a case twin within its directory" {
-              let folder = tempFolder ()
-              touch folder "P1.JPG"
-              touch folder "P1.jpg"
-
-              let plan =
-                  planDuplicateResolution folder { emptyScan with CaseCollisions = [ { FileName = "P1.jpg"; InRawSubfolder = false } ] }
-
-              Expect.equal
-                  plan.Moves
-                  [ { Kind = RenameInPlace
-                      SourcePath = Path.Combine(folder, "P1.jpg")
-                      TargetPath = Path.Combine(folder, "P1 (1).jpg")
-                      TargetRenamed = true } ]
-                  "le jumeau est renommé selon la convention système, dans son répertoire"
-          }
-
-          test "planDuplicateResolution without duplicates plans nothing" {
-              let folder = tempFolder ()
-              let plan = planDuplicateResolution folder emptyScan
-              Expect.isEmpty plan.Moves "aucun doublon, aucun déplacement"
-          }
-
-          // ---------- normalizeRawFolderName ----------
-
-          // « raw » distinct de « RAW » : impossible sur un FS insensible à
-          // la casse (NTFS) — sonde de capacité, voir TestHelpers.
-          testCaseSensitiveOnly
-              "normalizeRawFolderName renames a wrong-case folder to RAW"
-              (fun () ->
-              let folder = tempFolder ()
-              let wrongCase = Path.Combine(folder, "raw")
-              Directory.CreateDirectory(wrongCase) |> ignore
-              touch wrongCase "P1.RW2"
-
-              normalizeRawFolderName folder "raw"
-
-              Expect.isTrue (Directory.Exists(Path.Combine(folder, RawSubfolderName))) "le dossier est renommé en RAW"
-              Expect.isFalse (Directory.Exists(wrongCase)) "l'ancien nom a disparu"
-              Expect.isTrue (File.Exists(Path.Combine(folder, RawSubfolderName, "P1.RW2"))) "le contenu suit")
-
-          // Deux dossiers « raw » et « RAW » distincts : impossible sur un FS
-          // insensible à la casse (NTFS) — le test y passerait pour une raison
-          // erronée (même dossier), sonde de capacité.
-          testCaseSensitiveOnly
-              "normalizeRawFolderName refuses to run when RAW already exists"
-              (fun () ->
-              let folder = tempFolder ()
-              let wrongCase = Path.Combine(folder, "raw")
-              Directory.CreateDirectory(wrongCase) |> ignore
-              rawDir folder |> ignore
-
-              Expect.throws
-                  (fun () -> normalizeRawFolderName folder "raw")
-                  "le renommage est refusé si « RAW » existe déjà") ]
+        ]

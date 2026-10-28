@@ -24,8 +24,6 @@ type Phase =
 /// Action en attente de confirmation explicite de l'utilisateur.
 type PendingAction =
     | OrganizeFolder of rawMoves: int * jpgMoves: int
-    | ResolveDuplicates of count: int
-    | NormalizeRawFolder of foundName: string
     | DeleteTandem of stem: string
 
 /// Écran courant : une action en attente de confirmation est un écran à part
@@ -64,6 +62,7 @@ type Msg =
     | FolderScanFailed of requestId: int * folderPath: string * error: string
     | FolderRescanned of requestId: int * folderPath: string * scan: FolderScan
     | FolderRescanFailed of requestId: int * folderPath: string * error: string
+    | RescanRequested
     | OrganizeRequested
     | OrganizePlanned of folderPath: string * plan: OrganizationPlan
     | OrganizePlanningFailed of folderPath: string * error: string
@@ -72,16 +71,6 @@ type Msg =
     | OrganizeNothingToMove of folderPath: string
     | OrganizeFailed of folderPath: string * error: string
     | OrganizeCancelled
-    | ResolveDuplicatesRequested
-    | ResolveDuplicatesConfirmed
-    | ResolveDuplicatesCompleted of folderPath: string * outcome: MoveOutcome
-    | ResolveDuplicatesFailed of folderPath: string * error: string
-    | ResolveDuplicatesCancelled
-    | NormalizeRawFolderRequested
-    | NormalizeRawFolderConfirmed
-    | NormalizeRawFolderCompleted of folderPath: string
-    | NormalizeRawFolderFailed of folderPath: string * error: string
-    | NormalizeRawFolderCancelled
     | StartTriagingClicked
     | PreviousClicked
     | NextClicked
@@ -112,15 +101,6 @@ let private UnexpectedConfirmationStatus =
 
 // ========== Helpers ==========
 
-/// Nombre de déplacements que l'organisation peut planifier à partir du
-/// scan seul (sans I/O) : sert au libellé du bouton et aux gardes.
-let fixableCount (scan: FolderScan) =
-    scan.TandemsToOrganize.Length
-    + scan.OrphanRawsToOrganize.Length
-    + scan.CrossedTandems.Length * 2
-    + scan.InvertedTandems.Length
-    + scan.OrphanJpgsInRaw.Length
-
 /// Vrai quand une question est affichée (bandeau jaune) : les gestes de
 /// l'écran sous-jacent sont sans effet tant qu'elle n'est pas tranchée
 /// (règle VISION — la garde vit dans `update`, elle seule fait autorité).
@@ -130,6 +110,143 @@ let isQuestionPending (state: State) =
     match state.Screen with
     | Confirming _ -> true
     | Working _ -> false
+
+/// « 1 photo », « 2 photos » — pluriel français régulier pour les comptes
+/// dynamiques de l'UI, jamais de « photo(s) ».
+let pluralized (count: int) (noun: string) =
+    if count = 1 then sprintf "%d %s" count noun else sprintf "%d %ss" count noun
+
+/// Un problème d'organisation signalé à l'utilisateur — jamais réparé par
+/// l'application (option A, PROPOSITION-organisation.md) : une phrase
+/// humaine (le problème + le geste attendu, toujours visibles) et les
+/// fichiers concernés avec leur emplacement pour le détail replié.
+type SignaledProblem =
+    { /// Phrase du panneau « À corriger vous-même » : quoi et comment
+      /// corriger, jamais cachés derrière un clic (NN/g).
+      Sentence: string
+      /// Fichiers concernés avec leur emplacement, ex. « P3.JPG (dans RAW/) »
+      /// — liste vide : rien à replier.
+      FileNames: string list }
+
+let private located fileName place = sprintf "%s (%s)" fileName place
+
+/// Problèmes d'organisation signalés, jamais réparés : une entrée par
+/// catégorie réellement présente dans le scan — le panneau « À corriger
+/// vous-même » est absent si la liste est vide (pas d'UI morte). Le geste de
+/// réanalyse vit au pied du panneau, pas dans chaque phrase.
+let signaledProblems (scan: FolderScan) : SignaledProblem list =
+    let inverted =
+        if List.isEmpty scan.InvertedTandems then []
+        else
+            [ { Sentence =
+                    sprintf
+                        "%s : JPG et RAW tous les deux dans RAW/ — déplacez le JPG à la racine dans l'explorateur."
+                        (pluralized scan.InvertedTandems.Length "photo")
+                FileNames =
+                    scan.InvertedTandems
+                    |> List.collect (fun t -> [ located t.JpgFileName "dans RAW/"; located t.RawFileName "dans RAW/" ]) } ]
+
+    let crossed =
+        if List.isEmpty scan.CrossedTandems then []
+        else
+            [ { Sentence =
+                    sprintf
+                        "%s : JPG dans RAW/, RAW à la racine — remettez-les en place dans l'explorateur."
+                        (pluralized scan.CrossedTandems.Length "photo")
+                FileNames =
+                    scan.CrossedTandems
+                    |> List.collect (fun t -> [ located t.JpgFileName "dans RAW/"; located t.RawFileName "à la racine" ]) } ]
+
+    let duplicateRaws =
+        if List.isEmpty scan.DuplicateRaws then []
+        else
+            [ { Sentence =
+                    sprintf
+                        "%s : le même RW2 à la racine et dans RAW/ — supprimez ou déplacez le mauvais fichier."
+                        (pluralized scan.DuplicateRaws.Length "doublon")
+                FileNames = scan.DuplicateRaws |> List.map (fun f -> located f "à la racine") } ]
+
+    let duplicateJpgs =
+        if List.isEmpty scan.DuplicateJpgs then []
+        else
+            [ { Sentence =
+                    sprintf
+                        "%s : le même JPG à la racine et dans RAW/ — supprimez ou déplacez le mauvais fichier."
+                        (pluralized scan.DuplicateJpgs.Length "doublon")
+                FileNames = scan.DuplicateJpgs |> List.map (fun f -> located f "dans RAW/") } ]
+
+    let caseCollisions =
+        if List.isEmpty scan.CaseCollisions then []
+        else
+            [ { Sentence =
+                    sprintf
+                        "%s : deux fichiers ne diffèrent que par la casse — renommez le fichier en trop dans l'explorateur."
+                        (if scan.CaseCollisions.Length = 1 then "1 jumeau de casse"
+                         else sprintf "%d jumeaux de casse" scan.CaseCollisions.Length)
+                FileNames =
+                    scan.CaseCollisions
+                    |> List.map (fun c ->
+                        located c.FileName (if c.InRawSubfolder then "dans RAW/" else "à la racine")) } ]
+
+    let orphanJpgsAtRoot =
+        if List.isEmpty scan.OrphanJpgs then []
+        else
+            [ { Sentence =
+                    sprintf "%d JPG sans RAW à la racine — appariez-les ou supprimez-les dans l'explorateur." scan.OrphanJpgs.Length
+                FileNames = scan.OrphanJpgs |> List.map (fun f -> located f "à la racine") } ]
+
+    let orphanRawsAtRoot =
+        if List.isEmpty scan.OrphanRawsToOrganize then []
+        else
+            [ { Sentence =
+                    sprintf
+                        "%d RAW sans JPG à la racine — appariez-les ou supprimez-les dans l'explorateur."
+                        scan.OrphanRawsToOrganize.Length
+                FileNames = scan.OrphanRawsToOrganize |> List.map (fun f -> located f "à la racine") } ]
+
+    let filedOrphanRaws =
+        if List.isEmpty scan.FiledOrphanRaws then []
+        else
+            [ { Sentence =
+                    sprintf
+                        "%d RAW sans JPG déjà rangés dans RAW/ — appariez-les ou supprimez-les dans l'explorateur."
+                        scan.FiledOrphanRaws.Length
+                FileNames = scan.FiledOrphanRaws |> List.map (fun f -> located f "dans RAW/") } ]
+
+    let orphanJpgsInRaw =
+        if List.isEmpty scan.OrphanJpgsInRaw then []
+        else
+            [ { Sentence =
+                    sprintf "%d JPG isolés dans RAW/ — appariez-les ou supprimez-les dans l'explorateur." scan.OrphanJpgsInRaw.Length
+                FileNames = scan.OrphanJpgsInRaw |> List.map (fun f -> located f "dans RAW/") } ]
+
+    let rawFolderIssue =
+        match scan.RawFolderIssue with
+        | Some(RawFolderCaseMismatch foundName) ->
+            [ { Sentence =
+                    sprintf
+                        "Le dossier « %s » est mal cassé — renommez-le en « %s » dans l'explorateur pour permettre le rangement."
+                        foundName
+                        RawSubfolderName
+                FileNames = [] } ]
+        | Some RawFolderIsFile ->
+            [ { Sentence =
+                    sprintf
+                        "Un fichier nommé « %s » existe — renommez-le ou supprimez-le dans l'explorateur pour permettre le rangement."
+                        RawSubfolderName
+                FileNames = [] } ]
+        | None -> []
+
+    inverted
+    @ crossed
+    @ duplicateRaws
+    @ duplicateJpgs
+    @ caseCollisions
+    @ orphanJpgsAtRoot
+    @ orphanRawsAtRoot
+    @ filedOrphanRaws
+    @ orphanJpgsInRaw
+    @ rawFolderIssue
 
 /// Tandems visibles dans le tri : tous ceux dont le JPG est à la racine.
 let triableTandems (state: State) =
@@ -501,6 +618,23 @@ let private updateCore (msg: Msg) (state: State) : State * Cmd<Msg> =
         else
             state, Cmd.none
 
+    | RescanRequested ->
+        // Geste « Réanalyser » (UC organiser-et-trier-dossier, extensions 2a
+        // et 2b) : le dossier courant est re-scanné en arrière-plan — ni
+        // l'écran ni l'index ni le bandeau ne bougent, seul le scan est
+        // remplacé (FolderRescanned, garde de fraîcheur requestId). Une
+        // question affichée n'est jamais refermée : le geste est ignoré
+        // tant qu'elle est là (RC-05 — il est aussi grisé dans la vue, la
+        // garde reste seule autorité).
+        match state.Screen with
+        | Working _ ->
+            match state.FolderPath with
+            | Some folder -> state, rescanCmd state.ScanRequestId folder
+            | None ->
+                { state with Status = sprintf "%sAucun dossier analysé." ErrorStatusPrefix },
+                Cmd.none
+        | Confirming _ -> state, Cmd.none
+
     // ---------- Organisation ----------
 
     | OrganizeRequested ->
@@ -523,7 +657,10 @@ let private updateCore (msg: Msg) (state: State) : State * Cmd<Msg> =
                             foundName },
                 Cmd.none
             | _ ->
-                if fixableCount state.Scan = 0 then
+                // Option A : le rangement ne déplace que les RAW des couples
+                // appariés — les anomalies signalées ne comptent pas dans la
+                // garde (planOrganization suit la même règle).
+                if List.isEmpty state.Scan.TandemsToOrganize then
                     { state with Status = "Rien à remettre en ordre." }, Cmd.none
                 else
                     match state.FolderPath with
@@ -657,145 +794,6 @@ let private updateCore (msg: Msg) (state: State) : State * Cmd<Msg> =
             { state with
                 Screen = Working Organizing
                 Status = "Organisation annulée." },
-            Cmd.none
-        | Working _ | Confirming _ -> state, Cmd.none
-
-    // ---------- Résolution des doublons ----------
-
-    | ResolveDuplicatesRequested ->
-        match state.Screen with
-        | Working Organizing ->
-            let count =
-                state.Scan.DuplicateJpgs.Length
-                + state.Scan.DuplicateRaws.Length
-                + state.Scan.CaseCollisions.Length
-
-            if count = 0 then
-                { state with Status = "Aucun doublon." }, Cmd.none
-            else
-                { state with Screen = Confirming(Organizing, ResolveDuplicates count) }, Cmd.none
-        | Working _ | Confirming _ -> state, Cmd.none
-
-    | ResolveDuplicatesConfirmed ->
-        match state.Screen with
-        | Confirming(Organizing, ResolveDuplicates _) ->
-            match state.FolderPath with
-            | None ->
-                { state with
-                    Screen = Working Organizing
-                    Status = sprintf "%sAucun dossier analysé." ErrorStatusPrefix },
-                Cmd.none
-            | Some folder ->
-                { state with
-                    Screen = Working Organizing
-                    Status = "Résolution des doublons en cours…" },
-                Cmd.OfAsync.either
-                    (fun scan -> async {
-                        let plan = planDuplicateResolution folder scan
-                        return ResolveDuplicatesCompleted(folder, applyOrganization plan)
-                    })
-                    state.Scan
-                    id
-                    (fun ex -> ResolveDuplicatesFailed(folder, ex.Message))
-        | Confirming _ | Working _ -> reportUnexpectedConfirmation state
-
-    | ResolveDuplicatesCompleted(folderPath, outcome) ->
-        if resultIsFromAnotherFolder state folderPath then
-            // La résolution d'un dossier quitté s'est terminée : le bandeau
-            // seul reflète l'effet réel, rien ne bouge pour le dossier courant.
-            { state with Status = duplicatesOutcomeStatus outcome }, Cmd.none
-        else
-            match state.Screen with
-            | Working Organizing | Confirming(Organizing, _) ->
-                { state with Status = duplicatesOutcomeStatus outcome }, Cmd.none
-            | Working _ | Confirming _ -> state, Cmd.none
-
-    | ResolveDuplicatesFailed(folderPath, error) ->
-        if resultIsFromAnotherFolder state folderPath then
-            // L'échec d'un dossier quitté est annoncé dans le bandeau, sans
-            // éjecter l'utilisateur de l'écran courant.
-            { state with Status = sprintf "%sRésolution des doublons impossible : %s" ErrorStatusPrefix error }, Cmd.none
-        else
-            reportBackgroundFailure state (sprintf "%sRésolution des doublons impossible : %s" ErrorStatusPrefix error), Cmd.none
-
-    | ResolveDuplicatesCancelled ->
-        match state.Screen with
-        | Confirming(Organizing, ResolveDuplicates _) ->
-            { state with
-                Screen = Working Organizing
-                Status = "Résolution des doublons annulée." },
-            Cmd.none
-        | Working _ | Confirming _ -> state, Cmd.none
-
-    // ---------- Normalisation du nom du dossier RAW ----------
-
-    | NormalizeRawFolderRequested ->
-        match state.Screen with
-        | Working Organizing ->
-            match state.Scan.RawFolderIssue with
-            | Some(RawFolderCaseMismatch foundName) ->
-                { state with Screen = Confirming(Organizing, NormalizeRawFolder foundName) }, Cmd.none
-            | _ ->
-                { state with Status = "Aucun dossier mal cassé à renommer." }, Cmd.none
-        | Working _ | Confirming _ -> state, Cmd.none
-
-    | NormalizeRawFolderConfirmed ->
-        match state.Screen with
-        | Confirming(Organizing, NormalizeRawFolder foundName) ->
-            match state.FolderPath with
-            | None ->
-                { state with
-                    Screen = Working Organizing
-                    Status = sprintf "%sAucun dossier analysé." ErrorStatusPrefix },
-                Cmd.none
-            | Some folder ->
-                { state with
-                    Screen = Working Organizing
-                    Status = "Renommage du dossier en cours…" },
-                Cmd.OfAsync.either
-                    (fun name -> async {
-                        do normalizeRawFolderName folder name
-                        return NormalizeRawFolderCompleted folder
-                    })
-                    foundName
-                    id
-                    (fun ex -> NormalizeRawFolderFailed(folder, ex.Message))
-        | Confirming _ | Working _ -> reportUnexpectedConfirmation state
-
-    | NormalizeRawFolderCompleted(folderPath) ->
-        if resultIsFromAnotherFolder state folderPath then
-            // Le renommage réel d'un dossier quitté reste annoncé dans le
-            // bandeau : sans écran imposé, sans re-analyse — le dossier
-            // affiché n'est pas concerné.
-            { state with Status = sprintf "%sDossier renommé en « %s »." SuccessStatusPrefix RawSubfolderName }, Cmd.none
-        else
-            // Le scan est obsolète : le contenu du dossier renommé devient visible.
-            match state.FolderPath with
-            | Some folder ->
-                { state with
-                    Screen = Working Organizing
-                    Status = sprintf "%sDossier renommé en « %s », nouvelle analyse…" SuccessStatusPrefix RawSubfolderName },
-                scanCmd state.ScanRequestId folder
-            | None ->
-                { state with
-                    Screen = Working Organizing
-                    Status = sprintf "%sDossier renommé en « %s »." SuccessStatusPrefix RawSubfolderName },
-                Cmd.none
-
-    | NormalizeRawFolderFailed(folderPath, error) ->
-        if resultIsFromAnotherFolder state folderPath then
-            // L'échec d'un dossier quitté est annoncé dans le bandeau, sans
-            // éjecter l'utilisateur de l'écran courant.
-            { state with Status = sprintf "%sRenommage impossible : %s" ErrorStatusPrefix error }, Cmd.none
-        else
-            reportBackgroundFailure state (sprintf "%sRenommage impossible : %s" ErrorStatusPrefix error), Cmd.none
-
-    | NormalizeRawFolderCancelled ->
-        match state.Screen with
-        | Confirming(Organizing, NormalizeRawFolder _) ->
-            { state with
-                Screen = Working Organizing
-                Status = "Renommage du dossier annulé." },
             Cmd.none
         | Working _ | Confirming _ -> state, Cmd.none
 

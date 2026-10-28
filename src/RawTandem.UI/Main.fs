@@ -99,21 +99,6 @@ let private confirmationView (action: PendingAction) (dispatch: Msg -> unit) =
                         j
                         RawSubfolderName
             moveQuestion, "Déplacer", OrganizeConfirmed, OrganizeCancelled
-        | ResolveDuplicates count ->
-            sprintf
-                "Résoudre les %d doublons et jumeaux de casse ? Chaque fichier sera déplacé à sa place ou renommé (« nom (1).ext »). Aucun fichier n'est écrasé ni supprimé."
-                count,
-            "Résoudre",
-            ResolveDuplicatesConfirmed,
-            ResolveDuplicatesCancelled
-        | NormalizeRawFolder foundName ->
-            sprintf
-                "Renommer le dossier « %s » en « %s » ? Ses fichiers seront ensuite pris en compte."
-                foundName
-                RawSubfolderName,
-            "Renommer",
-            NormalizeRawFolderConfirmed,
-            NormalizeRawFolderCancelled
         | DeleteTandem stem ->
             sprintf
                 "Supprimer le tandem %s.JPG + %s.RW2 ? Les deux fichiers iront dans la corbeille (récupérables)."
@@ -243,119 +228,211 @@ let private homeView (dispatch: Msg -> unit) =
         ]
     ]
 
+/// Page d'organisation (option A, PROPOSITION-organisation.md) : une action
+/// primaire (« Ranger les RAW »), un panneau « À corriger vous-même »
+/// signal-only (une ligne par problème réellement présent, absent sinon) et
+/// le geste « Réanalyser » au plus près du besoin. Boutons réels : Ranger
+/// les RAW, Passer au tri, Ouvrir un autre dossier, Réanalyser (UC 2a/2b).
 let private organizingView (state: State) (dispatch: Msg -> unit) =
     let scan = state.Scan
-    let toOrganize = scan.TandemsToOrganize.Length
-    let organized = scan.OrganizedTandems.Length
-    let duplicates = scan.DuplicateJpgs.Length + scan.DuplicateRaws.Length + scan.CaseCollisions.Length
-    let plannedCount = fixableCount scan
+    let photosToRange = scan.TandemsToOrganize.Length
 
-    let summaryLine =
-        sprintf "%d tandem(s) à organiser, %d déjà organisé(s), %d RAW orphelin(s) à ranger." toOrganize organized scan.OrphanRawsToOrganize.Length
-
-    let namedLine (label: string) (names: string list) =
-        sprintf "%d %s : %s" names.Length label (String.concat ", " names)
-
-    let orphanLines : (string * IBrush) list =
-        [ if not (List.isEmpty scan.OrphanJpgs) then
-              (namedLine "JPG sans RAW" scan.OrphanJpgs, Brushes.Red)
-          if not (List.isEmpty scan.OrphanRawsToOrganize) then
-              (namedLine "RAW sans JPG, à la racine" scan.OrphanRawsToOrganize, Brushes.Red)
-          if not (List.isEmpty scan.FiledOrphanRaws) then
-              (namedLine "RAW sans JPG, déjà rangés" scan.FiledOrphanRaws, Brushes.Red)
-          if not (List.isEmpty scan.OrphanJpgsInRaw) then
-              (namedLine "JPG isolés dans RAW/" scan.OrphanJpgsInRaw, Brushes.Red) ]
-
-    let caseCollisionLine =
-        if List.isEmpty scan.CaseCollisions then
-            None
-        else
-            let located =
-                scan.CaseCollisions
-                |> List.map (fun c ->
-                    if c.InRawSubfolder then sprintf "%s (dans RAW/)" c.FileName else c.FileName)
-                |> String.concat ", "
-            Some(sprintf "%d jumeau(x) de casse : %s" scan.CaseCollisions.Length located)
-
-    let anomalyLines : (string * IBrush) list =
-        [ if not (List.isEmpty scan.DuplicateJpgs) then
-              (namedLine "doublons JPG (dans RAW/)" scan.DuplicateJpgs, Brushes.DarkOrange)
-          if not (List.isEmpty scan.DuplicateRaws) then
-              (namedLine "doublons RAW (à la racine)" scan.DuplicateRaws, Brushes.DarkOrange)
-          match caseCollisionLine with
-          | Some line -> (line, Brushes.DarkOrange)
-          | None -> ()
-          if not (List.isEmpty scan.CrossedTandems) then
-              (sprintf "%d tandem(s) croisé(s) (JPG dans RAW/, RAW à la racine)" scan.CrossedTandems.Length, Brushes.DarkOrange)
-          if not (List.isEmpty scan.InvertedTandems) then
-              (sprintf "%d tandem(s) inversé(s) (JPG et RAW dans RAW/)" scan.InvertedTandems.Length, Brushes.DarkOrange)
-          match scan.RawFolderIssue with
-          | Some RawFolderIsFile ->
-              (sprintf "« %s » existe mais est un fichier : organisation impossible." RawSubfolderName, Brushes.DarkOrange)
-          | Some (RawFolderCaseMismatch foundName) ->
-              (sprintf "Dossier « %s » mal cassé : « %s » n'existe pas. Renommez-le avant d'organiser." foundName RawSubfolderName, Brushes.DarkOrange)
-          | None -> () ]
-
-    let headerViews : Types.IView list =
-        [ TextBlock.create [
-              TextBlock.text "Dossier chargé :"
-              TextBlock.fontWeight FontWeight.Bold
-          ]
-          TextBox.create [
-              TextBox.isReadOnly true
-              TextBox.text (defaultArg state.FolderPath "")
-          ]
-          openAnotherFolderButton state dispatch
-          TextBlock.create [ TextBlock.text summaryLine ] ]
-
-    let namedViews : Types.IView list =
-        (orphanLines @ anomalyLines)
-        |> List.map (fun (line, brush) ->
-            TextBlock.create [
-                TextBlock.text line
-                TextBlock.foreground brush
-            ] :> Types.IView)
-
-    let organizeDisabled =
-        plannedCount = 0
-        || scan.RawFolderIssue.IsSome
-
-    // Bandeau modal : pendant une question, toute action de l'écran est un
-    // no-op gardé dans update — elle se voit grisée, jamais de clic mort.
+    // Bandeau modal (RC-05) : pendant une question, toute action de l'écran
+    // est un no-op gardé dans update — elle se voit grisée, jamais de clic
+    // mort en silence.
     let questionPending = isQuestionPending state
 
-    let renameButton : Types.IView list =
-        match scan.RawFolderIssue with
-        | Some (RawFolderCaseMismatch foundName) ->
-            [ Button.create [
-                  Button.content (sprintf "Renommer « %s » en « %s »" foundName RawSubfolderName)
-                  Button.isEnabled (not questionPending)
-                  Button.onClick (fun _ -> dispatch NormalizeRawFolderRequested)
+    let organizeDisabled =
+        photosToRange = 0
+        || scan.RawFolderIssue.IsSome
+
+    /// Ligne du panneau « À corriger vous-même » : phrase visible (quoi +
+    /// geste attendu) et, quand des fichiers sont concernés, le détail
+    /// replié — libellé concret avec compte (« Voir les 2 fichiers »),
+    /// jamais de « Plus de détails » (information scent).
+    let problemLine (problem: SignaledProblem) : Types.IView =
+        StackPanel.create [
+            StackPanel.spacing 4.0
+            StackPanel.children [
+                TextBlock.create [
+                    TextBlock.text ("• " + problem.Sentence)
+                    TextBlock.textWrapping TextWrapping.Wrap
+                ]
+                (if List.isEmpty problem.FileNames then
+                     TextBlock.create [ TextBlock.text "" ] :> Types.IView
+                 else
+                     Expander.create [
+                         Expander.header (
+                             TextBlock.create [
+                                 TextBlock.text (
+                                     if List.length problem.FileNames = 1 then
+                                         "Voir le fichier"
+                                     else
+                                         sprintf "Voir les %d fichiers" problem.FileNames.Length
+                                 )
+                             ]
+                         )
+                         Expander.content (
+                             StackPanel.create [
+                                 StackPanel.margin (Thickness(0.0, 4.0, 0.0, 0.0))
+                                 StackPanel.children (
+                                     problem.FileNames
+                                     |> List.map (fun fileName ->
+                                         TextBlock.create [
+                                             TextBlock.text fileName
+                                             TextBlock.foreground Brushes.DimGray
+                                         ]
+                                         :> Types.IView)
+                                 )
+                             ]
+                         )
+                     ] :> Types.IView)
+            ]
+        ] :> Types.IView
+
+    /// Panneau « À corriger vous-même » : une seule sévérité (orange), le
+    /// périmètre dans le titre, le geste de rafraîchissement au pied, au plus
+    /// près du besoin (« Corrections faites ? »). Absent s'il n'y a rien à
+    /// signaler (pas d'UI morte).
+    let anomaliesPanel : Types.IView list =
+        let problems = signaledProblems scan
+
+        if List.isEmpty problems then
+            []
+        else
+            let footer : Types.IView =
+                StackPanel.create [
+                    StackPanel.orientation Orientation.Horizontal
+                    StackPanel.spacing 8.0
+                    StackPanel.children [
+                        TextBlock.create [
+                            TextBlock.text "Corrections faites dans l'explorateur ?"
+                            TextBlock.verticalAlignment VerticalAlignment.Center
+                        ]
+                        Button.create [
+                            Button.content "Réanalyser (F5)"
+                            Button.tip "Réanalyser le dossier (F5)"
+                            Button.isEnabled (not questionPending)
+                            Button.onClick (fun _ -> dispatch RescanRequested)
+                        ]
+                    ]
+                ] :> Types.IView
+
+            let header : Types.IView =
+                TextBlock.create [
+                    TextBlock.text "⚠ À corriger vous-même — l'application ne gère pas ces cas"
+                    TextBlock.fontWeight FontWeight.Bold
+                    TextBlock.foreground Brushes.DarkOrange
+                ] :> Types.IView
+
+            let lines : Types.IView list = problems |> List.map problemLine
+
+            [ Border.create [
+                  Border.borderBrush Brushes.DarkOrange
+                  Border.borderThickness (Thickness(1.0))
+                  Border.cornerRadius (CornerRadius(6.0))
+                  Border.padding (Thickness(14.0))
+                  Border.child (
+                      StackPanel.create [
+                          StackPanel.spacing 10.0
+                          StackPanel.children ((header :: lines) @ [ footer ])
+                      ]
+                  )
               ] :> Types.IView ]
-        | _ -> []
 
-    let actionViews : Types.IView list =
-        ([ Button.create [
-              Button.content (sprintf "Organiser (%d déplacements)" plannedCount)
-              Button.isEnabled (not organizeDisabled && not questionPending)
-              Button.onClick (fun _ -> dispatch OrganizeRequested)
-           ] :> Types.IView
-           Button.create [
-               Button.content (sprintf "Résoudre les %d doublons et jumeaux de casse (renommage)" duplicates)
-               Button.isEnabled (duplicates > 0 && not questionPending)
-               Button.onClick (fun _ -> dispatch ResolveDuplicatesRequested)
-           ] :> Types.IView ]
-         @ renameButton
-         @ [ Button.create [
-                Button.content "Passer directement au tri"
-                Button.isEnabled (not questionPending)
-                Button.onClick (fun _ -> dispatch StartTriagingClicked)
-            ] :> Types.IView ])
+    /// Carte principale : une seule action primaire par écran — le geste
+    /// fréquent a la grosse cible (Fitts), le compte annonce ce qui va se
+    /// passer avant la confirmation.
+    let mainCard : Types.IView =
+        Border.create [
+            Border.background Brushes.Gainsboro
+            Border.cornerRadius (CornerRadius(6.0))
+            Border.padding (Thickness(16.0))
+            Border.child (
+                Grid.create [
+                    Grid.columnDefinitions "*,Auto"
+                    Grid.children [
+                        StackPanel.create [
+                            Grid.column 0
+                            StackPanel.spacing 4.0
+                            StackPanel.children [
+                                TextBlock.create [
+                                    TextBlock.text (sprintf "%s à ranger" (pluralized photosToRange "photo"))
+                                    TextBlock.fontSize 18.0
+                                    TextBlock.fontWeight FontWeight.Bold
+                                ]
+                                TextBlock.create [
+                                    TextBlock.text (
+                                        if photosToRange = 1 then
+                                            sprintf "1 fichier RAW ira dans le dossier « %s »" RawSubfolderName
+                                        else
+                                            sprintf "%d fichiers RAW iront dans le dossier « %s »" photosToRange RawSubfolderName
+                                    )
+                                    TextBlock.foreground Brushes.DimGray
+                                ]
+                            ]
+                        ] :> Types.IView
+                        Button.create [
+                            Grid.column 1
+                            Button.content "Ranger les RAW"
+                            Button.fontSize 16.0
+                            Button.padding (Thickness(16.0, 8.0))
+                            Button.isEnabled (not organizeDisabled && not questionPending)
+                            Button.onClick (fun _ -> dispatch OrganizeRequested)
+                        ] :> Types.IView
+                    ]
+                ]
+            )
+        ] :> Types.IView
 
-    StackPanel.create [
-        StackPanel.margin (Thickness(20.0))
-        StackPanel.spacing 12.0
-        StackPanel.children (headerViews @ namedViews @ actionViews)
+    /// Geste discret de contournement : trier sans ranger. Taille standard
+    /// (un lien trop petit est une cible ratée, Fitts), aligné à droite en
+    /// pied de page : même colonne d'actions que « Ranger les RAW », position
+    /// « continuer » en bas-droite comme la bascule plein écran du tri.
+    let goToTriageButton : Types.IView =
+        Button.create [
+            Button.content "Passer au tri →"
+            Button.horizontalAlignment HorizontalAlignment.Right
+            Button.isEnabled (not questionPending)
+            Button.onClick (fun _ -> dispatch StartTriagingClicked)
+        ] :> Types.IView
+
+    // Ascenseur : le panneau « À corriger vous-même » peut être long (une
+    // ligne par catégorie + listes de fichiers) — la page défile, le bas de
+    // la fenêtre reste atteignable (recette 06-melange).
+    ScrollViewer.create [
+        ScrollViewer.content (
+            StackPanel.create [
+                StackPanel.margin (Thickness(20.0))
+                StackPanel.spacing 16.0
+                StackPanel.children (
+            [ TextBlock.create [
+                  TextBlock.text "Dossier chargé :"
+                  TextBlock.fontWeight FontWeight.Bold
+              ] :> Types.IView
+              TextBox.create [
+                  TextBox.isReadOnly true
+                  TextBox.text (defaultArg state.FolderPath "")
+              ] :> Types.IView
+              StackPanel.create [
+                  StackPanel.orientation Orientation.Horizontal
+                  StackPanel.spacing 8.0
+                  StackPanel.children [
+                      openAnotherFolderButton state dispatch
+                      Button.create [
+                          Button.content "Réanalyser (F5)"
+                          Button.tip "Réanalyser le dossier (F5)"
+                          Button.isEnabled (not questionPending)
+                          Button.onClick (fun _ -> dispatch RescanRequested)
+                      ]
+                  ]
+              ] :> Types.IView
+              mainCard ]
+            @ anomaliesPanel
+            @ [ goToTriageButton ]
+                )
+            ]
+        )
     ]
 
 let private triagingView (state: State) (dispatch: Msg -> unit) =
@@ -562,6 +639,7 @@ let private keyToMsg (key: Key) : Msg option =
     | Key.Home -> Some FirstPhotoRequested
     | Key.End -> Some LastPhotoRequested
     | Key.Delete -> Some DeleteTandemRequested
+    | Key.F5 -> Some RescanRequested
     | Key.F
     | Key.F11 -> Some FullscreenRequested
     | Key.Escape -> Some FullscreenExitRequested

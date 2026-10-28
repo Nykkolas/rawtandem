@@ -11,7 +11,7 @@ open Avalonia.Controls
 open Avalonia.FuncUI.Hosts
 open Avalonia.Headless
 open Avalonia.Media.Imaging
-open Avalonia.VisualTree
+open Avalonia.LogicalTree
 open SkiaSharp
 open RawTandem.Core.Constants
 open RawTandem.Core.Exif
@@ -139,6 +139,63 @@ let private withPhotos (run: string -> unit) =
     for stem in [ "P1"; "P2"; "P3" ] do
         File.WriteAllText(Path.Combine(folder, stem + ".JPG"), "")
         File.WriteAllText(Path.Combine(rawDir, stem + ".RW2"), "")
+
+    try
+        run folder
+    finally
+        Directory.Delete(folder, true)
+
+/// Préconditions de l'extension 2a : dossier « Pellicule » avec des problèmes
+/// d'organisation — 2 bons couples à organiser (P1, P2), 1 couple inversé
+/// (P3 : JPG et RW2 tous les deux dans RAW/), 1 doublon (P4 : couple organisé
+/// + un RW2 en trop à la racine) et 1 JPG orphelin à la racine (P5). Fichiers
+/// vides créés par le test, dossier détruit en finally (pas des photos).
+let private withPelliculeAProblemes (run: string -> unit) =
+    let folder =
+        Path.Combine(Path.GetTempPath(), sprintf "rawtandem-scenario-Pellicule-2a-%s" (Guid.NewGuid().ToString("N")))
+
+    if Directory.Exists folder then Directory.Delete(folder, true)
+
+    Directory.CreateDirectory folder |> ignore
+    let rawDir = Path.Combine(folder, RawSubfolderName)
+    Directory.CreateDirectory rawDir |> ignore
+
+    for stem in [ "P1"; "P2" ] do
+        File.WriteAllText(Path.Combine(folder, stem + ".JPG"), "")
+        File.WriteAllText(Path.Combine(folder, stem + ".RW2"), "")
+
+    // P3 : couple inversé — les deux fichiers dans RAW/.
+    File.WriteAllText(Path.Combine(rawDir, "P3.JPG"), "")
+    File.WriteAllText(Path.Combine(rawDir, "P3.RW2"), "")
+
+    // P4 : couple organisé + doublon (le RW2 hors de sa place à la racine).
+    File.WriteAllText(Path.Combine(folder, "P4.JPG"), "")
+    File.WriteAllText(Path.Combine(folder, "P4.RW2"), "")
+    File.WriteAllText(Path.Combine(rawDir, "P4.RW2"), "")
+
+    // P5 : JPG orphelin — signalé, jamais déplacé par l'application.
+    File.WriteAllText(Path.Combine(folder, "P5.JPG"), "")
+
+    try
+        run folder
+    finally
+        Directory.Delete(folder, true)
+
+/// Préconditions de l'extension 2b : dossier avec un tandem à organiser (P1)
+/// et un répertoire « raw » en minuscules contenant un RW2 (P2) — invisible au
+/// scan, qui ne lit que « RAW ». Fichiers vides, dossier détruit en finally.
+let private withDossierRawMalCassee (run: string -> unit) =
+    let folder =
+        Path.Combine(Path.GetTempPath(), sprintf "rawtandem-scenario-raw-2b-%s" (Guid.NewGuid().ToString("N")))
+
+    if Directory.Exists folder then Directory.Delete(folder, true)
+
+    Directory.CreateDirectory folder |> ignore
+    File.WriteAllText(Path.Combine(folder, "P1.JPG"), "")
+    File.WriteAllText(Path.Combine(folder, "P1.RW2"), "")
+
+    Directory.CreateDirectory(Path.Combine(folder, "raw")) |> ignore
+    File.WriteAllText(Path.Combine(folder, "raw", "P2.RW2"), "")
 
     try
         run folder
@@ -319,8 +376,13 @@ let private renderPhoto (state: State) : RenderedPhoto option =
 /// Boutons de la vraie vue rendue pour l'état donné : (libellé, activé).
 /// Même matérialisation que renderPhoto (HostControl + Skia headless) : le
 /// test de RC-05 s'appuie sur la vue réellement rendue, pas sur un recalcul.
-/// Les boutons à icône (plein écran) n'ont pas de libellé texte — c'est leur
-/// état d'activation qui compte, le nom du type sert d'identifiant.
+/// Les boutons sont cherchés dans l'arbre **logique** : le ScrollViewer de la
+/// page d'organisation est un contrôle templaté — sans thème, le hôte headless
+/// n'attache jamais son contenu à l'arbre visuel (même piège que HostControl,
+/// voir renderPhoto) ; l'arbre logique, lui, porte tous les contrôles et leurs
+/// propriétés (IsEnabled compris). Les boutons à icône (plein écran) n'ont
+/// pas de libellé texte — c'est leur état d'activation qui compte, le nom du
+/// type sert d'identifiant.
 let private renderedButtons (state: State) : (string * bool) list =
     headlessSession
         .Dispatch(
@@ -332,7 +394,7 @@ let private renderedButtons (state: State) : (string * bool) list =
                 root.Measure(Size(900.0, 640.0))
                 root.Arrange(Rect(0.0, 0.0, 900.0, 640.0))
 
-                root.GetVisualDescendants()
+                root.GetLogicalDescendants()
                 |> Seq.choose (fun descendant ->
                     match descendant with
                     | :? Button as button -> Some(string button.Content, button.IsEnabled)
@@ -474,6 +536,165 @@ let scenarioTests =
                     [ yield! Directory.EnumerateFiles(photos)
                       yield! Directory.EnumerateFiles(rawDir) ]
                 Expect.equal present.Length 4 "P1 et P3 restent des deux côtés, seuls les fichiers de P2 sont partis")
+        }
+
+        /// Scénario exécutable de docs/usecases/organiser-et-trier-dossier.md,
+        /// extension 2a. Un seul dossier « mélange » : le flux est prouvé
+        /// (lister → corriger à la main → réanalyser → interface à jour →
+        /// reprise du primaire), la matrice des catégories de problèmes reste
+        /// en tests unitaires (FolderScanTests).
+        test "UC organiser-et-trier-dossier 2a : fix problems manually, reanalyze, then organize" {
+            withPelliculeAProblemes (fun pellicule ->
+                let rawDir = Path.Combine(pellicule, RawSubfolderName)
+
+                // 2a-1 : ouverture du dossier — l'application propose
+                // l'organisation et liste les problèmes d'organisation.
+                let s2 = init () |> fst |> step (FolderSelected pellicule)
+
+                Expect.equal s2.Screen (Working Organizing) "l'écran d'organisation est proposé"
+                Expect.equal s2.Scan.TandemsToOrganize.Length 2 "2 couples à organiser (P1, P2)"
+                Expect.equal s2.Scan.OrganizedTandems.Length 1 "1 couple déjà organisé (P4)"
+                Expect.equal s2.Scan.InvertedTandems.Length 1 "problème listé : P3 inversé"
+                Expect.equal s2.Scan.DuplicateRaws.Length 1 "problème listé : doublon de P4"
+                Expect.equal s2.Scan.OrphanJpgs.Length 1 "problème listé : P5 orphelin"
+
+                // 2a-2 : correction manuelle dans l'explorateur (hors de
+                // l'application) : le JPG de P3 revient à la racine (le couple
+                // inversé devient un couple organisé), le doublon de P4 part.
+                // P5 n'est pas corrigé : l'utilisateur est satisfait (2a-5) —
+                // il organisera malgré le signal.
+                File.Move(Path.Combine(rawDir, "P3.JPG"), Path.Combine(pellicule, "P3.JPG"))
+                File.Delete(Path.Combine(pellicule, "P4.RW2"))
+
+                // 2a-3 : l'utilisateur réanalyse le dossier.
+                // 2a-4 : l'interface se met entièrement à jour (comptes du scan).
+                let s4 = s2 |> step RescanRequested
+
+                Expect.equal s4.Scan.TandemsToOrganize.Length 2 "toujours 2 couples à organiser (P1, P2)"
+                Expect.equal s4.Scan.OrganizedTandems.Length 2 "P3 corrigé devient un couple organisé"
+                Expect.equal s4.Scan.InvertedTandems.Length 0 "plus de couple inversé"
+                Expect.equal s4.Scan.DuplicateRaws.Length 0 "plus de doublon"
+                Expect.equal s4.Scan.OrphanJpgs.Length 1 "P5 reste signalé, l'utilisateur a choisi de le garder"
+
+                // Seuls les couples correctement appariés s'affichent au
+                // tri : P3 devenu apparié y entre, l'orphelin P5 n'y entre
+                // jamais (signalé, pas géré).
+                Expect.equal
+                    (s4 |> triableTandems |> List.map (fun t -> t.Stem))
+                    [ "P1"; "P2"; "P3"; "P4" ]
+                    "la liste de tri ne montre que les couples appariés, jamais P5"
+
+                // 2a-5 : l'utilisateur est satisfait, le scénario principal
+                // reprend — il organise (vrais déplacements sur le disque).
+                let s5 = s4 |> step OrganizeRequested
+                Expect.equal s5.Screen (Confirming(Organizing, OrganizeFolder(2, 0))) "UC-4 : 2 RW2 appariés annoncés"
+
+                let s6 = s5 |> step OrganizeConfirmed
+                Expect.equal s6.Screen (Working Triaging) "passage automatique au tri après l'organisation"
+
+                // Le rangement remet le scan à jour (bug du scan périmé,
+                // 2026-10-24, corrigé par le rescan en cascade) : les 4
+                // couples sont organisés et leurs RW2 sont cherchés dans
+                // RAW/ — un plan de suppression ne peut plus viser la racine.
+                Expect.equal s6.Scan.TandemsToOrganize.Length 0 "plus rien à organiser"
+                Expect.equal s6.Scan.OrganizedTandems.Length 4 "les 4 couples sont organisés"
+
+                for stem in [ "P1"; "P2"; "P3"; "P4" ] do
+                    match findTriableTandem s6.Scan stem with
+                    | Some(_, InRawSubfolder) -> ()
+                    | _ -> failtestf "le RW2 de %s doit être cherché dans RAW/ après le rangement" stem
+
+                Expect.equal
+                    (s6 |> triableTandems |> List.map (fun t -> t.Stem))
+                    [ "P1"; "P2"; "P3"; "P4" ]
+                    "la liste de tri montre les 4 couples appariés rangés"
+
+                for stem in [ "P1"; "P2" ] do
+                    Expect.isTrue (File.Exists(Path.Combine(rawDir, stem + ".RW2"))) "le RW2 du couple apparié est rangé"
+
+                for stem in [ "P1"; "P2"; "P3"; "P4" ] do
+                    Expect.isTrue (File.Exists(Path.Combine(pellicule, stem + ".JPG"))) "le JPG reste à la racine"
+
+                // Signal-only : l'orphelin P5 n'est jamais touché par
+                // l'application — il reste exactement où il est.
+                Expect.isTrue (File.Exists(Path.Combine(pellicule, "P5.JPG"))) "l'orphelin signalé n'est pas déplacé"
+
+                // Garantie minimale : 9 fichiers présents après correction (le
+                // doublon supprimé par l'utilisateur en moins des 10 créés),
+                // aucun n'est perdu ni écrasé par l'application.
+                let present =
+                    [ yield! Directory.EnumerateFiles(pellicule)
+                      yield! Directory.EnumerateFiles(rawDir) ]
+                Expect.equal present.Length 9 "aucun fichier perdu ni écrasé")
+        }
+
+        /// Scénario exécutable de docs/usecases/organiser-et-trier-dossier.md,
+        /// extension 2b : le répertoire « raw » mal cassé bloque le rangement
+        /// (refus gardé dans update, déjà testé en unitaire — le scénario ne
+        /// peut pas cliquer un bouton grisé) ; correction manuelle, réanalyse,
+        /// retour au primaire.
+        test "UC organiser-et-trier-dossier 2b : wrong-cased raw folder blocks organize until fixed and reanalyzed" {
+            withDossierRawMalCassee (fun pellicule ->
+                let rawDir = Path.Combine(pellicule, RawSubfolderName)
+
+                // 2b-1 : ouverture — l'anomalie est signalée (même panneau que
+                // 2a-1) et le contenu de « raw » est invisible au scan.
+                let s2 = init () |> fst |> step (FolderSelected pellicule)
+
+                Expect.equal s2.Screen (Working Organizing) "l'écran d'organisation est proposé"
+                Expect.equal s2.Scan.TandemsToOrganize.Length 1 "1 couple à organiser (P1)"
+                Expect.equal s2.Scan.RawFolderIssue (Some(RawFolderCaseMismatch "raw")) "l'anomalie du dossier « raw » est signalée"
+                Expect.stringContains s2.Status "mal cass" "le signal est visible dans le bandeau"
+
+                // 2b-1 : « l'application ne permet pas de ranger ». Le bouton
+                // est grisé (affordance, non observable ici) : on vérifie le
+                // filet de sécurité — même si le message de rangement arrive
+                // (futur raccourci clavier), la machine refuse, et le disque
+                // ne bouge pas. Garde aussi couverte en unitaire ; rejouée
+                // ici parce que le refus est une garantie de l'extension.
+                let sRefusal = s2 |> step OrganizeRequested
+
+                Expect.equal sRefusal.Screen (Working Organizing) "le rangement est refusé : aucune confirmation ouverte"
+                Expect.stringContains sRefusal.Status "renommez" "le refus explique quoi faire"
+                Expect.isFalse (Directory.Exists rawDir) "aucun dossier « RAW » n'est créé pendant l'anomalie"
+                Expect.isTrue (File.Exists(Path.Combine(pellicule, "P1.RW2"))) "aucun fichier déplacé pendant l'anomalie"
+
+                // 2b-2 : correction manuelle dans l'explorateur : « raw »
+                // redevient « RAW ».
+                Directory.Move(Path.Combine(pellicule, "raw"), rawDir)
+
+                // 2b-3 : l'utilisateur réanalyse.
+                // 2b-4 : retour à l'étape 2 du primaire — l'anomalie a
+                // disparu et le contenu du dossier renommé devient visible.
+                let s4 = sRefusal |> step RescanRequested
+
+                Expect.equal s4.Scan.RawFolderIssue None "l'anomalie a disparu après correction et réanalyse"
+                Expect.equal s4.Scan.TandemsToOrganize.Length 1 "le couple P1 est toujours proposé"
+                Expect.equal s4.Scan.FiledOrphanRaws.Length 1 "le RW2 de « raw » est maintenant visible (orphelin rangé)"
+
+                // « Le bouton Ranger est de nouveau accessible » : l'état
+                // grisé d'un bouton n'est pas observable ici (sémantique de
+                // vue), la preuve fonctionnelle est le geste joué — la
+                // demande de rangement aboutit désormais à la confirmation
+                // (elle était refusée s2 → sRefusal, elle passe s4 → s5).
+                let s5 = s4 |> step OrganizeRequested
+                Expect.equal s5.Screen (Confirming(Organizing, OrganizeFolder(1, 0))) "UC-4 : le rangement redevient possible, 1 RW2 apparié annoncé"
+
+                let s6 = s5 |> step OrganizeConfirmed
+                Expect.equal s6.Screen (Working Triaging) "passage automatique au tri après l'organisation"
+
+                Expect.isTrue (File.Exists(Path.Combine(rawDir, "P1.RW2"))) "le RW2 du couple apparié est rangé"
+                Expect.isTrue (File.Exists(Path.Combine(pellicule, "P1.JPG"))) "le JPG reste à la racine"
+
+                // Signal-only : l'orphelin rangé P2, devenu visible à la
+                // réanalyse, n'est pas touché par le rangement.
+                Expect.isTrue (File.Exists(Path.Combine(rawDir, "P2.RW2"))) "l'orphelin rangé n'est pas déplacé"
+
+                // Garantie minimale : les 3 fichiers créés sont tous comptés.
+                let present =
+                    [ yield! Directory.EnumerateFiles(pellicule)
+                      yield! Directory.EnumerateFiles(rawDir) ]
+                Expect.equal present.Length 3 "aucun fichier perdu ni écrasé")
         }
 
         /// Scénario exécutable de docs/usecases/regles-communes.md, règle RC-01.
@@ -754,7 +975,8 @@ let scenarioTests =
             // Pendant une question, tout geste de l'écran sous-jacent est un
             // no-op gardé dans update — il doit aussi se voir : bouton grisé,
             // jamais de clic mort en silence. Seuls Déplacer / Annuler restent
-            // actifs.
+            // actifs. Les boutons-maquettes du prototype (Voir les fichiers,
+            // Réanalyser) suivent la même règle.
             let buttons = renderedButtons (displayState (Confirming(Organizing, OrganizeFolder(1, 0))))
 
             let outsideQuestion =
@@ -763,7 +985,7 @@ let scenarioTests =
 
             Expect.isFalse
                 (outsideQuestion |> List.exists snd)
-                "aucune action hors question n'est active (Organiser, Résoudre, Passer au tri, dossier, renommage)"
+                "aucune action hors question n'est active (Ranger, Voir les fichiers, Réanalyser, Passer au tri, dossier)"
 
             Expect.isTrue
                 (buttons |> List.exists (fun (label, enabled) -> label = "Déplacer" && enabled))
@@ -800,6 +1022,6 @@ let scenarioTests =
             let buttons = renderedButtons (displayState (Working Organizing))
 
             Expect.isTrue
-                (buttons |> List.exists (fun (label, enabled) -> label.StartsWith "Organiser" && enabled))
-                "Organiser est actif hors question"
+                (buttons |> List.exists (fun (label, enabled) -> label.StartsWith "Ranger" && enabled))
+                "Ranger les RAW est actif hors question"
         } ]
