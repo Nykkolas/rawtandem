@@ -181,6 +181,32 @@ let private withPelliculeAProblemes (run: string -> unit) =
     finally
         Directory.Delete(folder, true)
 
+/// Indique si le filesystem du dossier temporaire distingue la casse des
+/// noms. Sonde de capacité réelle, pas test d'OS (règle AGENTS/ERREURS-
+/// GENERIC) — même sonde que `RawTandem.Core.Tests/TestHelpers.fs`,
+/// dupliquée ici car les projets de tests ne se référencent pas.
+let private isCaseSensitiveFileSystem () =
+    let folder = Path.Combine(Path.GetTempPath(), "rawtandem-scenario-case-probe", Guid.NewGuid().ToString("N"))
+    Directory.CreateDirectory folder |> ignore
+    let probe = Path.Combine(folder, "sonde.tmp")
+    File.WriteAllText(probe, "1")
+    File.WriteAllText(Path.Combine(folder, "SONDE.tmp"), "2")
+    let sensitive = File.ReadAllText probe = "1"
+    Directory.Delete(folder, true)
+    sensitive
+
+/// Scénario joué uniquement si le filesystem distingue la casse. L'état « raw »
+/// distinct de « RAW » (UC organiser-et-trier-dossier 2b) est impossible à
+/// créer sur un FS insensible (NTFS fusionne les deux noms : le scan lit
+/// « raw » comme « RAW », l'anomalie n'existe pas) — le scénario y serait
+/// rouge pour une raison erronée : il est ignoré (compté « ignoré », jamais
+/// silencieusement absent ni silencieusement vert).
+let private testScenarioCaseSensitiveOnly (name: string) (scenario: unit -> unit) : Expecto.Test =
+    if isCaseSensitiveFileSystem () then
+        Expecto.Tests.testCase name scenario
+    else
+        Expecto.Tests.ptestCase name scenario
+
 /// Préconditions de l'extension 2b : dossier avec un tandem à organiser (P1)
 /// et un répertoire « raw » en minuscules contenant un RW2 (P2) — invisible au
 /// scan, qui ne lit que « RAW ». Fichiers vides, dossier détruit en finally.
@@ -633,69 +659,70 @@ let scenarioTests =
         /// (refus gardé dans update, déjà testé en unitaire — le scénario ne
         /// peut pas cliquer un bouton grisé) ; correction manuelle, réanalyse,
         /// retour au primaire.
-        test "UC organiser-et-trier-dossier 2b : wrong-cased raw folder blocks organize until fixed and reanalyzed" {
-            withDossierRawMalCassee (fun pellicule ->
-                let rawDir = Path.Combine(pellicule, RawSubfolderName)
-
-                // 2b-1 : ouverture — l'anomalie est signalée (même panneau que
-                // 2a-1) et le contenu de « raw » est invisible au scan.
-                let s2 = init () |> fst |> step (FolderSelected pellicule)
-
-                Expect.equal s2.Screen (Working Organizing) "l'écran d'organisation est proposé"
-                Expect.equal s2.Scan.TandemsToOrganize.Length 1 "1 couple à organiser (P1)"
-                Expect.equal s2.Scan.RawFolderIssue (Some(RawFolderCaseMismatch "raw")) "l'anomalie du dossier « raw » est signalée"
-                Expect.stringContains s2.Status "mal cass" "le signal est visible dans le bandeau"
-
-                // 2b-1 : « l'application ne permet pas de ranger ». Le bouton
-                // est grisé (affordance, non observable ici) : on vérifie le
-                // filet de sécurité — même si le message de rangement arrive
-                // (futur raccourci clavier), la machine refuse, et le disque
-                // ne bouge pas. Garde aussi couverte en unitaire ; rejouée
-                // ici parce que le refus est une garantie de l'extension.
-                let sRefusal = s2 |> step OrganizeRequested
-
-                Expect.equal sRefusal.Screen (Working Organizing) "le rangement est refusé : aucune confirmation ouverte"
-                Expect.stringContains sRefusal.Status "renommez" "le refus explique quoi faire"
-                Expect.isFalse (Directory.Exists rawDir) "aucun dossier « RAW » n'est créé pendant l'anomalie"
-                Expect.isTrue (File.Exists(Path.Combine(pellicule, "P1.RW2"))) "aucun fichier déplacé pendant l'anomalie"
-
-                // 2b-2 : correction manuelle dans l'explorateur : « raw »
-                // redevient « RAW ».
-                Directory.Move(Path.Combine(pellicule, "raw"), rawDir)
-
-                // 2b-3 : l'utilisateur réanalyse.
-                // 2b-4 : retour à l'étape 2 du primaire — l'anomalie a
-                // disparu et le contenu du dossier renommé devient visible.
-                let s4 = sRefusal |> step RescanRequested
-
-                Expect.equal s4.Scan.RawFolderIssue None "l'anomalie a disparu après correction et réanalyse"
-                Expect.equal s4.Scan.TandemsToOrganize.Length 1 "le couple P1 est toujours proposé"
-                Expect.equal s4.Scan.FiledOrphanRaws.Length 1 "le RW2 de « raw » est maintenant visible (orphelin rangé)"
-
-                // « Le bouton Ranger est de nouveau accessible » : l'état
-                // grisé d'un bouton n'est pas observable ici (sémantique de
-                // vue), la preuve fonctionnelle est le geste joué — la
-                // demande de rangement aboutit désormais à la confirmation
-                // (elle était refusée s2 → sRefusal, elle passe s4 → s5).
-                let s5 = s4 |> step OrganizeRequested
-                Expect.equal s5.Screen (Confirming(Organizing, OrganizeFolder(1, 0))) "UC-4 : le rangement redevient possible, 1 RW2 apparié annoncé"
-
-                let s6 = s5 |> step OrganizeConfirmed
-                Expect.equal s6.Screen (Working Triaging) "passage automatique au tri après l'organisation"
-
-                Expect.isTrue (File.Exists(Path.Combine(rawDir, "P1.RW2"))) "le RW2 du couple apparié est rangé"
-                Expect.isTrue (File.Exists(Path.Combine(pellicule, "P1.JPG"))) "le JPG reste à la racine"
-
-                // Signal-only : l'orphelin rangé P2, devenu visible à la
-                // réanalyse, n'est pas touché par le rangement.
-                Expect.isTrue (File.Exists(Path.Combine(rawDir, "P2.RW2"))) "l'orphelin rangé n'est pas déplacé"
-
-                // Garantie minimale : les 3 fichiers créés sont tous comptés.
-                let present =
-                    [ yield! Directory.EnumerateFiles(pellicule)
-                      yield! Directory.EnumerateFiles(rawDir) ]
-                Expect.equal present.Length 3 "aucun fichier perdu ni écrasé")
-        }
+        testScenarioCaseSensitiveOnly
+            "UC organiser-et-trier-dossier 2b : wrong-cased raw folder blocks organize until fixed and reanalyzed"
+            (fun () ->
+                withDossierRawMalCassee (fun pellicule ->
+                    let rawDir = Path.Combine(pellicule, RawSubfolderName)
+    
+                    // 2b-1 : ouverture — l'anomalie est signalée (même panneau que
+                    // 2a-1) et le contenu de « raw » est invisible au scan.
+                    let s2 = init () |> fst |> step (FolderSelected pellicule)
+    
+                    Expect.equal s2.Screen (Working Organizing) "l'écran d'organisation est proposé"
+                    Expect.equal s2.Scan.TandemsToOrganize.Length 1 "1 couple à organiser (P1)"
+                    Expect.equal s2.Scan.RawFolderIssue (Some(RawFolderCaseMismatch "raw")) "l'anomalie du dossier « raw » est signalée"
+                    Expect.stringContains s2.Status "mal cass" "le signal est visible dans le bandeau"
+    
+                    // 2b-1 : « l'application ne permet pas de ranger ». Le bouton
+                    // est grisé (affordance, non observable ici) : on vérifie le
+                    // filet de sécurité — même si le message de rangement arrive
+                    // (futur raccourci clavier), la machine refuse, et le disque
+                    // ne bouge pas. Garde aussi couverte en unitaire ; rejouée
+                    // ici parce que le refus est une garantie de l'extension.
+                    let sRefusal = s2 |> step OrganizeRequested
+    
+                    Expect.equal sRefusal.Screen (Working Organizing) "le rangement est refusé : aucune confirmation ouverte"
+                    Expect.stringContains sRefusal.Status "renommez" "le refus explique quoi faire"
+                    Expect.isFalse (Directory.Exists rawDir) "aucun dossier « RAW » n'est créé pendant l'anomalie"
+                    Expect.isTrue (File.Exists(Path.Combine(pellicule, "P1.RW2"))) "aucun fichier déplacé pendant l'anomalie"
+    
+                    // 2b-2 : correction manuelle dans l'explorateur : « raw »
+                    // redevient « RAW ».
+                    Directory.Move(Path.Combine(pellicule, "raw"), rawDir)
+    
+                    // 2b-3 : l'utilisateur réanalyse.
+                    // 2b-4 : retour à l'étape 2 du primaire — l'anomalie a
+                    // disparu et le contenu du dossier renommé devient visible.
+                    let s4 = sRefusal |> step RescanRequested
+    
+                    Expect.equal s4.Scan.RawFolderIssue None "l'anomalie a disparu après correction et réanalyse"
+                    Expect.equal s4.Scan.TandemsToOrganize.Length 1 "le couple P1 est toujours proposé"
+                    Expect.equal s4.Scan.FiledOrphanRaws.Length 1 "le RW2 de « raw » est maintenant visible (orphelin rangé)"
+    
+                    // « Le bouton Ranger est de nouveau accessible » : l'état
+                    // grisé d'un bouton n'est pas observable ici (sémantique de
+                    // vue), la preuve fonctionnelle est le geste joué — la
+                    // demande de rangement aboutit désormais à la confirmation
+                    // (elle était refusée s2 → sRefusal, elle passe s4 → s5).
+                    let s5 = s4 |> step OrganizeRequested
+                    Expect.equal s5.Screen (Confirming(Organizing, OrganizeFolder(1, 0))) "UC-4 : le rangement redevient possible, 1 RW2 apparié annoncé"
+    
+                    let s6 = s5 |> step OrganizeConfirmed
+                    Expect.equal s6.Screen (Working Triaging) "passage automatique au tri après l'organisation"
+    
+                    Expect.isTrue (File.Exists(Path.Combine(rawDir, "P1.RW2"))) "le RW2 du couple apparié est rangé"
+                    Expect.isTrue (File.Exists(Path.Combine(pellicule, "P1.JPG"))) "le JPG reste à la racine"
+    
+                    // Signal-only : l'orphelin rangé P2, devenu visible à la
+                    // réanalyse, n'est pas touché par le rangement.
+                    Expect.isTrue (File.Exists(Path.Combine(rawDir, "P2.RW2"))) "l'orphelin rangé n'est pas déplacé"
+    
+                    // Garantie minimale : les 3 fichiers créés sont tous comptés.
+                    let present =
+                        [ yield! Directory.EnumerateFiles(pellicule)
+                          yield! Directory.EnumerateFiles(rawDir) ]
+                    Expect.equal present.Length 3 "aucun fichier perdu ni écrasé"))
 
         /// Scénario exécutable de docs/usecases/regles-communes.md, règle RC-01.
         /// Coverage générique : un seul test pour toutes les vues de tri.
