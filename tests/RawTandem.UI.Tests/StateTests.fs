@@ -1064,18 +1064,15 @@ let stateTests =
                 }
 
                 test "DeleteTandemCompleted keeps a pending confirmation on screen" {
-                    // Parcours UI : la suppression de P1 tourne en arrière-plan.
-                    // Pendant ce temps l'utilisateur navigue vers P2 et demande sa
-                    // suppression : la question « Supprimer P2 ? » s'affiche. La
-                    // suppression de P1 réussit : la question ne doit pas disparaître
-                    // — la réussite n'a pas plus le droit d'annuler une action en
-                    // attente qu'un échec. Seul le bandeau bas confirme P1.
+                    // RC-06 : naviguer pendant une suppression en vol est
+                    // bloqué — le parcours UI d'origine (naviguer vers P2 puis
+                    // re-demander sa suppression pendant le vol) est impossible
+                    // par règle. L'invariant de machine reste : un résultat
+                    // d'arrière-plan ne referme jamais une question posée
+                    // (règle VISION) — vérifié depuis un état construit à la
+                    // main.
                     let state =
-                        triaging' ()
-                        |> update' DeleteTandemRequested // « Supprimer P1 ? »
-                        |> update' DeleteTandemConfirmed // suppression de P1 en arrière-plan
-                        |> update' NextClicked // il navigue vers P2
-                        |> update' DeleteTandemRequested // « Supprimer P2 ? » : question affichée
+                        { triaging' () with Screen = Confirming(Triaging, DeleteTandem fixtureStems.[1]) }
                         |> update' (DeleteTandemCompleted(fixtureFolderPath, fixtureStems.[0], deletionTrashed fixtureStems.[0]))
 
                     Expect.equal state.Screen (Confirming(Triaging, DeleteTandem "P2")) "la question posée reste affichée"
@@ -1107,17 +1104,13 @@ let stateTests =
                 }
 
                 test "DeleteTandemCompleted while back on the Organizing screen still updates the scan" {
-                    // L'utilisateur ré-ouvre le même dossier pendant que la
-                    // suppression tourne : l'écran est celui de l'organisation
-                    // à l'arrivée du résultat. Le scan doit quand même refléter
-                    // la suppression réelle (mêmes fichiers, même dossier),
-                    // sans charger de photo hors du tri.
+                    // RC-06 : ré-ouvrir un dossier pendant une suppression en
+                    // vol est bloqué — l'écran d'organisation pendant le vol
+                    // est inatteignable par l'UI. La branche machine reste :
+                    // un résultat de suppression met le scan à jour quel que
+                    // soit l'écran affiché, sans charger de photo hors du tri.
                     let state =
-                        triaging' ()
-                        |> update' DeleteTandemRequested
-                        |> update' DeleteTandemConfirmed // suppression en arrière-plan
-                        |> update' (FolderSelected fixtureFolderPath) // le même dossier est ré-ouvert
-                        |> update' (FolderScanned(2, fixtureFolderPath, fixtureScan)) // retour à l'écran d'organisation
+                        { triaging' () with Screen = Working Organizing }
                         |> update' (DeleteTandemCompleted(fixtureFolderPath, fixtureStems.[0], deletionTrashed fixtureStems.[0]))
 
                     Expect.equal state.Screen (Working Organizing) "l'écran d'organisation reste"
@@ -1336,12 +1329,14 @@ let stateTests =
                 }
 
                 test "DeleteTandemCompleted from the previous folder leaves the new folder scan alone" {
+                    // RC-06 : ouvrir un dossier pendant une suppression en vol
+                    // est bloqué — le parcours UI d'origine (changer de
+                    // dossier pendant le vol) est impossible par règle. La
+                    // garde de fraîcheur reste : un résultat de l'ancien
+                    // dossier ne touche ni le scan ni l'écran du dossier
+                    // courant, seul le bandeau bas le reflète (règle VISION).
                     let state =
-                        { triaging' () with FolderPath = Some fixtureFolderPath }
-                        |> update' DeleteTandemRequested
-                        |> update' DeleteTandemConfirmed // suppression de l'ancien dossier, tourne en arrière-plan
-                        |> update' (FolderSelected otherFolderPath)
-                        |> update' (FolderScanned(2, otherFolderPath, fixtureScan)) // le nouveau dossier a aussi un P1
+                        scanOfOtherFolder ()
                         |> update' (DeleteTandemCompleted(fixtureFolderPath, fixtureStems.[0], deletionTrashed fixtureStems.[0]))
 
                     Expect.equal state.Scan.TandemsToOrganize.Length fixtureStems.Length "le tandem du nouveau dossier n'est pas retiré : ses fichiers existent toujours"

@@ -39,6 +39,17 @@ type DisplayMode =
     | Normal
     | Fullscreen
 
+/// Opération asynchrone en vol (règle RC-06) : tant qu'elle tourne,
+/// l'utilisateur ne lance pas de nouvelle action. L'affichage d'une image
+/// n'en est jamais une (exception 1 : il ne pose jamais ce drapeau) ;
+/// l'ouverture d'un dossier reste possible pendant une réanalyse
+/// (exception 2). Seules les opérations couvertes par les tests de la règle
+/// en posent un — les suivantes suivront leurs propres tests.
+type InFlightOperation =
+    | OrganizeExecution
+    | PostOrganizeRescan of requestId: int
+    | TandemDeletion
+
 type State =
     { Screen: Screen
       FolderPath: string option
@@ -54,6 +65,9 @@ type State =
       DisplayMode: DisplayMode
       /// JPG du tandem courant, décodé à taille d'affichage (jamais le RAW).
       CurrentJpg: IImage option
+      /// Opération asynchrone en vol (RC-06) : les gestes utilisateur sont
+      /// bloqués tant qu'elle n'est pas terminée.
+      InFlight: InFlightOperation option
       Status: string }
 
 type Msg =
@@ -110,6 +124,69 @@ let isQuestionPending (state: State) =
     match state.Screen with
     | Confirming _ -> true
     | Working _ -> false
+
+/// RC-06 : vrai quand une opération asynchrone bloque les nouvelles actions
+/// utilisateur — la garde vit dans `update`, le grisage des widgets dans la
+/// vue (l'affordance accompagne la garde sans jamais la remplacer).
+let isBlockingOperationInFlight (state: State) = state.InFlight.IsSome
+
+/// RC-06, exception 2 : l'ouverture d'un dossier reste possible pendant une
+/// analyse (aucune opération en vol ne la bloque) ou une réanalyse — jamais
+/// pendant les autres vols.
+let canOpenFolder (state: State) =
+    match state.InFlight with
+    | Some(PostOrganizeRescan _) | None -> true
+    | Some _ -> false
+
+/// RC-06 : un message est un geste utilisateur (bouton, touche mappée) —
+/// ni un résultat d'opération, ni le clavier non mappé, ni l'affichage
+/// d'image (exception 1 : il ne pose jamais de drapeau). L'ouverture d'un
+/// dossier en est un, bloqué pendant les vols sauf la réanalyse (exception
+/// 2, tranchée dans isBlockedGesture).
+let private isUserGesture (msg: Msg) =
+    match msg with
+    | FolderScanned _ | FolderScanFailed _
+    | FolderRescanned _ | FolderRescanFailed _
+    | OrganizePlanned _ | OrganizePlanningFailed _
+    | OrganizeCompleted _ | OrganizeNothingToMove _ | OrganizeFailed _
+    | DeleteTandemCompleted _ | DeleteTandemFailed _
+    | JpgLoaded _ | JpgLoadFailed _
+    | StatusHidden -> false
+    | FolderSelected _
+    | RescanRequested
+    | OrganizeRequested | OrganizeConfirmed | OrganizeCancelled
+    | StartTriagingClicked
+    | PreviousClicked | NextClicked | FirstPhotoRequested | LastPhotoRequested
+    | FullscreenRequested | FullscreenExitRequested
+    | DeleteTandemRequested | DeleteTandemConfirmed | DeleteTandemCancelled -> true
+
+/// RC-06 : un geste utilisateur est bloqué pendant une opération en vol —
+/// sauf l'ouverture d'un dossier pendant une réanalyse (exception 2).
+let private isBlockedGesture (state: State) (msg: Msg) =
+    match state.InFlight with
+    | None -> false
+    | Some(PostOrganizeRescan _) ->
+        match msg with
+        | FolderSelected _ -> false
+        | _ -> isUserGesture msg
+    | Some _ -> isUserGesture msg
+
+/// RC-06 : la réanalyse suivie par le drapeau est terminée — le drapeau se
+/// lève dès que son résultat (ou son échec) revient, frais **ou dépassé** :
+/// un résultat dépassé (dossier changé pendant la réanalyse, ce que
+/// l'exception 2 permet) ne doit jamais laisser l'application bloquée sans
+/// rien en vol.
+let private clearTrackedRescan (requestId: int) (state: State) =
+    match state.InFlight with
+    | Some(PostOrganizeRescan tracked) when tracked = requestId -> { state with InFlight = None }
+    | _ -> state
+
+/// RC-06 : le drapeau de la réanalyse post-rangement se pose quand le
+/// rafraîchissement part — sans dossier, rien ne reviendra jamais le lever.
+let private withPostOrganizeRescan (state: State) =
+    match state.FolderPath with
+    | Some _ -> { state with InFlight = Some(PostOrganizeRescan state.ScanRequestId) }
+    | None -> { state with InFlight = None }
 
 /// « 1 photo », « 2 photos » — pluriel français régulier pour les comptes
 /// dynamiques de l'UI, jamais de « photo(s) ».
@@ -407,6 +484,7 @@ let init () : State * Cmd<Msg> =
       CurrentIndex = 0
       DisplayMode = Normal
       CurrentJpg = None
+      InFlight = None
       Status = "" },
     Cmd.none
 
@@ -604,18 +682,20 @@ let private updateCore (msg: Msg) (state: State) : State * Cmd<Msg> =
         // referme jamais une question affichée et n'écrase pas le bilan
         // visible (règles VISION, audit itération 4). Le résultat n'appartient
         // qu'à la demande la plus récente du dossier courant.
+        // RC-06 : le drapeau de la réanalyse se lève dès que son résultat
+        // revient, frais ou dépassé (clearTrackedRescan).
         if isCurrentScanRequest state requestId folderPath then
-            { state with Scan = scan }, Cmd.none
+            { clearTrackedRescan requestId state with Scan = scan }, Cmd.none
         else
-            state, Cmd.none
+            clearTrackedRescan requestId state, Cmd.none
 
     | FolderRescanFailed(requestId, folderPath, error) ->
         if isCurrentScanRequest state requestId folderPath then
-            { state with
+            { clearTrackedRescan requestId state with
                 Status = sprintf "%sRafraîchissement du dossier impossible : %s" ErrorStatusPrefix error },
             Cmd.none
         else
-            state, Cmd.none
+            clearTrackedRescan requestId state, Cmd.none
 
     | RescanRequested ->
         // Geste « Réanalyser » (UC organiser-et-trier-dossier, extensions 2a
@@ -722,9 +802,12 @@ let private updateCore (msg: Msg) (state: State) : State * Cmd<Msg> =
                     Status = sprintf "%sAucun dossier analysé." ErrorStatusPrefix },
                 Cmd.none
             | Some folder ->
+                // RC-06 : l'exécution est en vol dès la confirmation —
+                // aucun geste ne passe jusqu'à son terme.
                 { state with
                     Screen = Working Organizing
-                    Status = "Organisation en cours…" },
+                    Status = "Organisation en cours…"
+                    InFlight = Some OrganizeExecution },
                 Cmd.OfAsync.either
                     (fun scan -> async {
                         let plan = planOrganization folder scan
@@ -744,7 +827,8 @@ let private updateCore (msg: Msg) (state: State) : State * Cmd<Msg> =
             // L'organisation d'un dossier quitté s'est terminée : le bandeau
             // seul reflète l'effet réel, ni l'écran ni le scan du dossier
             // courant ne bougent, aucun rafraîchissement n'est lancé.
-            { state with Status = movesOutcomeStatus outcome }, Cmd.none
+            // RC-06 : le vol est terminé, le drapeau se lève.
+            { state with Status = movesOutcomeStatus outcome; InFlight = None }, Cmd.none
         else
             // Les fichiers ont bougé : le scan en mémoire est périmé (les RAW
             // déplacés y sont encore notés à la racine — bug du scan périmé,
@@ -755,34 +839,47 @@ let private updateCore (msg: Msg) (state: State) : State * Cmd<Msg> =
                 | Some folder -> rescanCmd state.ScanRequestId folder
                 | None -> Cmd.none
 
+            // RC-06 : l'exécution est terminée mais la réanalyse qu'elle
+            // déclenche est en vol — la main n'est rendue qu'à son retour
+            // (drapeau PostOrganizeRescan, levé par FolderRescanned/Failed).
             if List.isEmpty outcome.Failed then
                 // Passage automatique au tri seulement depuis l'écran d'organisation :
                 // une question en attente n'est jamais refermée par un résultat
                 // d'arrière-plan, la réussite pas plus que l'échec.
                 if state.Screen = Working Organizing then
-                    let nextState = { state with Screen = Working Triaging; Status = movesOutcomeStatus outcome }
+                    let nextState =
+                        withPostOrganizeRescan
+                            { state with
+                                Screen = Working Triaging
+                                Status = movesOutcomeStatus outcome }
                     nextState, loadCurrentJpgCmd nextState @ refresh
                 else
-                    { state with Status = movesOutcomeStatus outcome }, refresh
+                    withPostOrganizeRescan { state with Status = movesOutcomeStatus outcome }, refresh
             else
-                reportBackgroundFailure state (movesOutcomeStatus outcome), refresh
+                withPostOrganizeRescan (reportBackgroundFailure state (movesOutcomeStatus outcome)), refresh
 
     | OrganizeNothingToMove(folderPath) ->
+        // RC-06 : le vol de l'exécution se termine sans rien déplacer, le
+        // drapeau se lève.
         if resultIsFromAnotherFolder state folderPath then
-            { state with Status = "Rien à déplacer : le dossier a changé entre-temps." }, Cmd.none
+            { state with Status = "Rien à déplacer : le dossier a changé entre-temps."; InFlight = None }, Cmd.none
         else
             match state.Screen with
             | Working Organizing ->
-                { state with Status = "Rien à déplacer : le dossier a changé entre-temps." }, Cmd.none
-            | Working _ | Confirming _ -> state, Cmd.none
+                { state with Status = "Rien à déplacer : le dossier a changé entre-temps."; InFlight = None }, Cmd.none
+            | Working _ | Confirming _ -> { state with InFlight = None }, Cmd.none
 
     | OrganizeFailed(folderPath, error) ->
+        // RC-06 : le vol est terminé en échec, le drapeau se lève.
         if resultIsFromAnotherFolder state folderPath then
             // L'échec d'un dossier quitté ne ramène personne à l'écran
             // d'organisation : il est annoncé dans le bandeau, c'est tout.
-            { state with Status = sprintf "%sOrganisation impossible : %s" ErrorStatusPrefix error }, Cmd.none
+            { state with
+                Status = sprintf "%sOrganisation impossible : %s" ErrorStatusPrefix error
+                InFlight = None }, Cmd.none
         else
-            reportBackgroundFailure state (sprintf "%sOrganisation impossible : %s" ErrorStatusPrefix error), Cmd.none
+            { reportBackgroundFailure state (sprintf "%sOrganisation impossible : %s" ErrorStatusPrefix error) with
+                InFlight = None }, Cmd.none
 
     | OrganizeCancelled ->
         match state.Screen with
@@ -903,9 +1000,12 @@ let private updateCore (msg: Msg) (state: State) : State * Cmd<Msg> =
                 | Some(tandem, rawLocation) ->
                     let stem = tandem.Stem
 
+                    // RC-06 : la suppression est en vol dès la confirmation —
+                    // aucun geste ne passe jusqu'à son terme.
                     { state with
                         Screen = Working Triaging
-                        Status = "Suppression en cours…" },
+                        Status = "Suppression en cours…"
+                        InFlight = Some TandemDeletion },
                     Cmd.OfAsync.either
                         (fun (tandem, location) -> async {
                             // Le plan (chemins complets des deux fichiers) est
@@ -936,18 +1036,22 @@ let private updateCore (msg: Msg) (state: State) : State * Cmd<Msg> =
                 // dans l'une ou l'autre.
                 let visibleCount = toOrganize.Length + organized.Length
 
+                // RC-06 : la suppression est terminée, le drapeau se lève —
+                // la main est rendue.
                 let nextState =
                     { state with
                         Scan = { state.Scan with TandemsToOrganize = toOrganize; OrganizedTandems = organized }
                         CurrentIndex = bounded visibleCount state.CurrentIndex
-                        Status = status }
+                        Status = status
+                        InFlight = None }
 
                 nextState, loadCurrentJpgCmd nextState
             else
-                { state with Status = status }, Cmd.none
+                { state with Status = status; InFlight = None }, Cmd.none
         else
             // Échec (même partiel) : le tandem reste dans le scan — il est
             // toujours visible au tri — et chaque échec est signalé.
+            // RC-06 : le vol est terminé, le drapeau se lève.
             let failedPath, failedReason = List.head outcome.Failed
 
             { state with
@@ -958,15 +1062,18 @@ let private updateCore (msg: Msg) (state: State) : State * Cmd<Msg> =
                         outcome.Trashed.Length
                         outcome.Failed.Length
                         (Path.GetFileName failedPath)
-                        failedReason },
+                        failedReason
+                InFlight = None },
             Cmd.none
 
     | DeleteTandemFailed(_, stem, error) ->
         // Le dossier et le stem voyagent avec l'échec : l'utilisateur sait
         // quelle photo n'a pas pu partir à la corbeille (règle VISION :
         // un échec n'est jamais avalé, quel que soit le dossier affiché).
+        // RC-06 : le vol est terminé en échec, le drapeau se lève.
         { state with
-            Status = sprintf "%sSuppression de %s impossible : %s" ErrorStatusPrefix stem error },
+            Status = sprintf "%sSuppression de %s impossible : %s" ErrorStatusPrefix stem error
+            InFlight = None },
         Cmd.none
 
     // ---------- Affichage du JPG courant ----------
@@ -1023,23 +1130,28 @@ let StatusFullscreenDisplayMs = 3000
 let private autoHideStatusCmd : Cmd<Msg> =
     Cmd.OfAsync.perform (fun () -> Async.Sleep StatusFullscreenDisplayMs) () (fun () -> StatusHidden)
 
-/// Update enveloppant updateCore : la logique des messages vit dans
-/// updateCore, l'éphémérisation du statut en plein écran est l'unique
-/// préoccupation de l'enveloppe — un seul endroit, tous les messages couverts.
+/// Update enveloppant updateCore : la garde RC-06 vit ici (un geste pendant
+/// une opération en vol est un no-op, la vue le grise — affordance), la
+/// logique des messages vit dans updateCore, l'éphémérisation du statut en
+/// plein écran est l'unique préoccupation de l'enveloppe — un seul endroit,
+/// tous les messages couverts.
 let update (msg: Msg) (state: State) : State * Cmd<Msg> =
-    let nextState, cmd = updateCore msg state
-
-    let enteredFullscreenWithStatus =
-        nextState.DisplayMode = Fullscreen
-        && state.DisplayMode = Normal
-        && nextState.Status <> ""
-
-    let statusAppearedInFullscreen =
-        nextState.DisplayMode = Fullscreen
-        && nextState.Status <> ""
-        && nextState.Status <> state.Status
-
-    if enteredFullscreenWithStatus || statusAppearedInFullscreen then
-        nextState, Cmd.batch [ cmd; autoHideStatusCmd ]
+    if isBlockedGesture state msg then
+        state, Cmd.none
     else
-        nextState, cmd
+        let nextState, cmd = updateCore msg state
+
+        let enteredFullscreenWithStatus =
+            nextState.DisplayMode = Fullscreen
+            && state.DisplayMode = Normal
+            && nextState.Status <> ""
+
+        let statusAppearedInFullscreen =
+            nextState.DisplayMode = Fullscreen
+            && nextState.Status <> ""
+            && nextState.Status <> state.Status
+
+        if enteredFullscreenWithStatus || statusAppearedInFullscreen then
+            nextState, Cmd.batch [ cmd; autoHideStatusCmd ]
+        else
+            nextState, cmd

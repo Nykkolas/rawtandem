@@ -28,6 +28,10 @@
   dans `tests/RawTandem.UI.Tests/ScenarioTests.fs` avec l'interpréteur `step` (le test ne joue
   que les gestes de l'utilisateur, les commandes Elmish sont exécutées réellement en cascade,
   vraie corbeille OS sur dossier temporaire).
+- **Proposer les tests avant de les écrire** : les tests issus d'une discussion RC/UC (E2E)
+  sont d'abord proposés en liste nommée — un nom par test, l'attendu rouge/vert aujourd'hui,
+  ce qu'il verrouille — et validés par l'utilisateur avant rédaction ; les tests TDD
+  unitaires de l'implémentation n'ont pas besoin de cette relecture (étape 3 de SPEC-UC).
 
 ## 🌍 Langue
 

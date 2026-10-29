@@ -53,49 +53,86 @@ let private headlessSession =
 // enregistré (« Unable to locate IPlatformRenderInterface »).
 headlessSession.Dispatch(Action ignore, CancellationToken.None).Wait()
 
-/// Pas de scénario : traite un message utilisateur, puis exécute les
-/// commandes que `update` planifie — le rôle du runtime Elmish — et renvoie
-/// dans `update` les messages qu'elles dispatchent, cascade comprise.
+/// Exécute les commandes que `update` planifie — le rôle du runtime Elmish —
+/// et renvoie les messages qu'elles dispatchent, cascade comprise.
 ///
 /// Réalité vérifiée (Elmish 5.0.2) : `Cmd.OfAsync.either` exécute le workflow
 /// sur le pool de threads — même sans point de suspension, le dispatch arrive
 /// après le retour du Sub. Chaque Sub de ce projet dispatche exactement un
-/// message (la branche succès ou erreur de `OfAsync.either`) ; step attend
+/// message (la branche succès ou erreur de `OfAsync.either`) ; runSubs attend
 /// donc chaque message avec un timeout, au lieu de le perdre.
-let private step (msg: Msg) (state: State) : State =
-    let runSubs (cmd: Cmd<Msg>) : Msg list =
-        let subs = List.ofSeq cmd
-        let subCount = List.length subs
-        let dispatched = ResizeArray<Msg>()
-        let allDispatched = new ManualResetEventSlim(false)
+let private runSubs (cmd: Cmd<Msg>) : Msg list =
+    let subs = List.ofSeq cmd
+    let subCount = List.length subs
+    let dispatched = ResizeArray<Msg>()
+    let allDispatched = new ManualResetEventSlim(false)
 
-        let collect m =
-            let isComplete =
-                lock dispatched (fun () ->
-                    dispatched.Add m
-                    dispatched.Count >= subCount)
+    let collect m =
+        let isComplete =
+            lock dispatched (fun () ->
+                dispatched.Add m
+                dispatched.Count >= subCount)
 
-            if isComplete then allDispatched.Set()
+        if isComplete then allDispatched.Set()
 
-        subs |> List.iter (fun sub -> sub collect)
+    subs |> List.iter (fun sub -> sub collect)
 
-        if subCount > 0 && not (allDispatched.Wait(TimeSpan.FromSeconds 5.0)) then
-            failwithf "Commande sans retour : %d message(s) attendu(s), %d reçu(s)" subCount dispatched.Count
+    if subCount > 0 && not (allDispatched.Wait(TimeSpan.FromSeconds 5.0)) then
+        failwithf "Commande sans retour : %d message(s) attendu(s), %d reçu(s)" subCount dispatched.Count
 
-        List.ofSeq dispatched
+    List.ofSeq dispatched
 
-    // Cascade : chaque message produit peut en recommander (ex. après une
-    // suppression, le JPG courant est rechargé). Boucle bornée de sécurité.
-    let rec run (s: State) (pending: Msg list) (fuel: int) =
+/// Cascade : chaque message produit peut en recommander (ex. après une
+/// suppression, le JPG courant est rechargé). Boucle bornée de sécurité.
+let private runCascade (s: State) (pending0: Msg list) (fuel0: int) : State =
+    let rec go s pending fuel =
         match pending, fuel with
         | [], _ -> s
         | m :: _, 0 -> failwithf "Cascade de commandes sans fin (dernier message : %A)" m
         | m :: rest, fuel ->
             let s', cmd' = update m s
-            run s' (rest @ runSubs cmd') (fuel - 1)
+            go s' (rest @ runSubs cmd') (fuel - 1)
 
+    go s pending0 fuel0
+
+/// Pas de scénario : traite un message utilisateur, puis exécute les
+/// commandes que `update` planifie et traite leurs messages, cascade comprise.
+let private step (msg: Msg) (state: State) : State =
     let state', cmd = update msg state
-    run state' (runSubs cmd) 50
+    runCascade state' (runSubs cmd) 50
+
+// ========== RC-06 : pas « en vol » (docs/usecases/regles-communes.md) ==========
+//
+// `step` attend la fin de toutes les commandes : il ne peut jamais observer
+// un état « pendant » une opération asynchrone. RC-06 interdit à l'utilisateur
+// de lancer une nouvelle action tant que la précédente n'est pas terminée —
+// pour jouer « l'utilisateur clique pendant que ça tourne », trois pas
+// supplémentaires séparent le décollage de l'atterrissage.
+
+/// Pas « décollé » : traite le geste utilisateur sans exécuter les commandes
+/// qu'il planifie — l'opération asynchrone part, son résultat n'est pas
+/// encore revenu. Rend l'état en vol et les commandes en attente.
+let private takeOff (msg: Msg) (state: State) : State * Cmd<Msg> = update msg state
+
+/// Atterrit un vol : exécute les commandes en attente, traite leurs messages
+/// et leur cascade — l'opération est terminée, la main est rendue.
+let private landFlight (flight: State * Cmd<Msg>) : State =
+    runCascade (fst flight) (runSubs (snd flight)) 50
+
+/// Atterrit une seule vague d'un vol : les commandes s'exécutent, leurs
+/// messages sont traités, mais les commandes que ceux-ci planifient restent
+/// en attente — le moment intermédiaire de RC-06 (ex. le rangement est fait,
+/// la réanalyse qu'il déclenche tourne encore : l'utilisateur attend dans la
+/// vue tri). Rend l'état intermédiaire et les commandes encore en vol.
+let private landOneWave (flight: State * Cmd<Msg>) : State * Cmd<Msg> =
+    let rec go s pending acc =
+        match pending with
+        | [] -> s, acc
+        | m :: rest ->
+            let s', c' = update m s
+            go s' rest (acc @ c')
+
+    go (fst flight) (runSubs (snd flight)) Cmd.none
 
 /// Préconditions du UC : dossier « Pellicule », 3 couples JPG+RW2 appariés à
 /// la racine, aucun sous-répertoire RAW. Fichiers vides créés par le test :
@@ -444,6 +481,7 @@ let private displayState (screen: Screen) : State =
       CurrentIndex = 0
       DisplayMode = Normal
       CurrentJpg = None
+      InFlight = None
       Status = "" }
 
 /// Scénario exécutable de docs/usecases/organiser-et-trier-dossier.md.
@@ -1051,4 +1089,334 @@ let scenarioTests =
             Expect.isTrue
                 (buttons |> List.exists (fun (label, enabled) -> label.StartsWith "Ranger" && enabled))
                 "Ranger les RAW est actif hors question"
+        }
+
+        // ---------- RC-06 : actions asynchrones juste nécessaires (docs/usecases/regles-communes.md) ----------
+        //
+        // Deux niveaux d'observation, comme RC-05 : la garde vit dans update
+        // (les gestes en vol sont des no-ops — testés en jouant les messages
+        // directement, comme le fait le clavier), l'affordance vit dans la
+        // vue (les widgets sont grisés pendant le vol — testés sur la vraie
+        // vue rendue). Les tests d'exception verrouillent les deux portes de
+        // sortie de la règle pour que l'implémentation ne sur-bloque pas.
+
+        /// RC-06, garde : pendant l'exécution du rangement, aucun geste de
+        /// l'écran d'organisation ne passe. Rouge aujourd'hui : « Passer au
+        /// tri » et un second rangement agissent pendant le vol.
+        test "RC-06 common rule : organizing gestures are no-ops while the organize execution is in flight" {
+            withPellicule (fun pellicule ->
+                // Précondition : dossier ouvert, rangement demandé, question
+                // affichée (RC-05), geste de confirmation joué.
+                let confirming =
+                    init ()
+                    |> fst
+                    |> step (FolderSelected pellicule)
+                    |> step OrganizeRequested
+
+                Expect.equal confirming.Screen (Confirming(Organizing, OrganizeFolder 3)) "précondition : 3 RAW annoncés"
+
+                // Décollé : l'exécution part (vrais déplacements), son
+                // résultat n'est pas encore revenu.
+                let flight = takeOff OrganizeConfirmed confirming
+                Expect.equal (fst flight).Screen (Working Organizing) "l'exécution laisse l'écran d'organisation"
+                Expect.stringContains (fst flight).Status "Organisation en cours" "le vol est visible dans le bandeau"
+
+                // RC-06 : « Passer au tri » ne passe pas pendant le vol.
+                let goToTriage = step StartTriagingClicked (fst flight)
+                Expect.equal goToTriage.Screen (Working Organizing) "Passer au tri est sans effet pendant le rangement"
+
+                // RC-06 : un second rangement ne rouvre pas de question.
+                let again = step OrganizeRequested (fst flight)
+                Expect.equal again.Screen (Working Organizing) "un second rangement est sans effet pendant le vol"
+                Expect.equal again.Status (fst flight).Status "le statut ne bouge pas non plus"
+
+                // RC-06 : « Réanalyser » ne passe pas pendant le vol. L'égalité
+                // d'état seule serait un faux vert (une réanalyse du même
+                // dossier rend un scan identique) : la preuve observable est
+                // qu'aucune commande n'est planifiée.
+                let rescanAttempt = takeOff RescanRequested (fst flight)
+                Expect.equal (fst rescanAttempt) (fst flight) "Réanalyser est sans effet sur l'état pendant le vol"
+                Expect.isTrue (List.isEmpty (List.ofSeq (snd rescanAttempt))) "Réanalyser ne lance aucune commande pendant le vol"
+
+                // RC-06 : ouvrir un dossier ne passe pas non plus —
+                // l'exception 2 ne couvre que l'analyse et la réanalyse.
+                let openAttempt = takeOff (FolderSelected pellicule) (fst flight)
+                Expect.equal (fst openAttempt) (fst flight) "ouvrir un dossier est sans effet pendant le rangement"
+                Expect.isTrue (List.isEmpty (List.ofSeq (snd openAttempt))) "aucune nouvelle analyse n'est lancée pendant le rangement"
+
+                // Atterrissage : déplacements, réanalyse en cascade, main
+                // rendue — le tri s'ouvre sur un scan frais.
+                let landed = landFlight flight
+                Expect.equal landed.Screen (Working Triaging) "le tri s'ouvre une fois tout terminé"
+                Expect.equal landed.Scan.TandemsToOrganize.Length 0 "le scan est frais à l'arrivée au tri"
+
+                // La main est rendue : la navigation repasse.
+                let navigated = step NextClicked landed
+                Expect.equal navigated.CurrentIndex 1 "la navigation repasse après l'atterrissage")
+        }
+
+        /// RC-06, garde : le rangement déclenche une réanalyse automatique —
+        /// l'utilisateur attend dans la vue tri et la main n'est rendue
+        /// qu'à l'arrivée du scan frais. Rouge aujourd'hui : la suppression
+        /// part pendant la réanalyse, c'est la course du « tandem fantôme »
+        /// (le rescan, cliché pris avant, réafficherait une photo supprimée).
+        test "RC-06 common rule : the hand is not returned until the post-organize rescan completes" {
+            withPellicule (fun pellicule ->
+                let confirming =
+                    init ()
+                    |> fst
+                    |> step (FolderSelected pellicule)
+                    |> step OrganizeRequested
+
+                // Première vague d'atterrissage : les déplacements sont faits,
+                // l'écran bascule au tri — mais la réanalyse que le rangement
+                // déclenche tourne encore.
+                let waiting = landOneWave (takeOff OrganizeConfirmed confirming)
+
+                Expect.equal (fst waiting).Screen (Working Triaging) "l'utilisateur attend dans la vue tri pendant la réanalyse"
+
+                // RC-06 : Suppr n'ouvre aucune confirmation pendant la réanalyse.
+                let askedDuring = step DeleteTandemRequested (fst waiting)
+                Expect.equal askedDuring (fst waiting) "Suppr est sans effet pendant la réanalyse"
+
+                // RC-06 : la navigation non plus.
+                let navigated = step NextClicked (fst waiting)
+                Expect.equal navigated.CurrentIndex (fst waiting).CurrentIndex "la navigation est sans effet pendant la réanalyse"
+
+                // RC-06 : le plein écran non plus (geste de vue, mais geste).
+                let fullscreen = step FullscreenRequested (fst waiting)
+                Expect.equal fullscreen.DisplayMode Normal "le plein écran est sans effet pendant la réanalyse"
+
+                // Atterrissage de la réanalyse : le scan est frais, la main
+                // est rendue — la suppression repasse.
+                let landed = landFlight waiting
+                Expect.equal landed.Scan.TandemsToOrganize.Length 0 "le scan est frais après la réanalyse"
+
+                let askedAfter = step DeleteTandemRequested landed
+                Expect.equal askedAfter.Screen (Confirming(Triaging, DeleteTandem "P1")) "la main rendue : la suppression repasse")
+        }
+
+        /// RC-06, garde : pendant l'exécution d'une suppression, les gestes
+        /// du tri sont des no-ops — un second Suppr ne rouvre pas de question.
+        /// Rouge aujourd'hui : tous ces gestes agissent pendant le vol.
+        test "RC-06 common rule : triage gestures are no-ops while a tandem deletion is in flight" {
+            withPhotos (fun photos ->
+                let rawDir = Path.Combine(photos, RawSubfolderName)
+
+                let confirming =
+                    init ()
+                    |> fst
+                    |> step (FolderSelected photos)
+                    |> step DeleteTandemRequested
+
+                Expect.equal confirming.Screen (Confirming(Triaging, DeleteTandem "P1")) "précondition : suppression de P1 confirmable"
+
+                let flight = takeOff DeleteTandemConfirmed confirming
+                Expect.stringContains (fst flight).Status "Suppression en cours" "le vol est visible dans le bandeau"
+
+                // RC-06 : un second Suppr ne rouvre pas de question.
+                let doubleDelete = step DeleteTandemRequested (fst flight)
+                Expect.equal doubleDelete (fst flight) "un second Suppr est sans effet pendant la suppression"
+
+                // RC-06 : la navigation non plus.
+                let navigated = step NextClicked (fst flight)
+                Expect.equal navigated.CurrentIndex 0 "la navigation est sans effet pendant la suppression"
+
+                // RC-06 : le plein écran non plus.
+                let fullscreen = step FullscreenRequested (fst flight)
+                Expect.equal fullscreen.DisplayMode Normal "le plein écran est sans effet pendant la suppression"
+
+                // RC-06 : ouvrir un dossier ne passe pas non plus —
+                // l'exception 2 ne couvre que l'analyse et la réanalyse.
+                let openAttempt = takeOff (FolderSelected photos) (fst flight)
+                Expect.equal (fst openAttempt) (fst flight) "ouvrir un dossier est sans effet pendant la suppression"
+                Expect.isTrue (List.isEmpty (List.ofSeq (snd openAttempt))) "aucune nouvelle analyse n'est lancée pendant la suppression"
+
+                // Atterrissage : le tandem est parti (vraie corbeille OS),
+                // la main est rendue.
+                let landed = landFlight flight
+                Expect.isFalse (File.Exists(Path.Combine(photos, "P1.JPG"))) "le JPG est parti à la corbeille"
+                Expect.isFalse (File.Exists(Path.Combine(rawDir, "P1.RW2"))) "le RW2 est parti à la corbeille"
+                Expect.equal (triableTandems landed).Length 2 "le tandem supprimé quitte le tri"
+
+                let askedAfter = step DeleteTandemRequested landed
+                Expect.equal askedAfter.Screen (Confirming(Triaging, DeleteTandem "P2")) "la main rendue : la suppression repasse pour la photo courante")
+        }
+
+        /// RC-06, affordance : pendant un vol, les widgets d'action sont
+        /// grisés dans la vraie vue, l'ouverture de dossier comprise —
+        /// sauf pendant la réanalyse, où l'exception 2 la laisse active.
+        /// Rouge aujourd'hui : rien n'est grisé pendant les vols.
+        test "RC-06 common rule : action widgets are grayed while an operation is in flight, and come back after" {
+            withPellicule (fun pellicule ->
+                // Vol de l'exécution du rangement (écran d'organisation) :
+                // tout est grisé, l'ouverture comprise.
+                let organizeFlight =
+                    init ()
+                    |> fst
+                    |> step (FolderSelected pellicule)
+                    |> step OrganizeRequested
+                    |> takeOff OrganizeConfirmed
+
+                let organizeButtons = renderedButtons (fst organizeFlight)
+
+                Expect.isFalse (organizeButtons |> List.exists snd) "toutes les actions sont grisées pendant le rangement, ouverture comprise"
+
+                // Vol de la réanalyse post-rangement (vue tri) : l'exception 2
+                // laisse l'ouverture de dossier active, elle seule.
+                let waiting = landOneWave organizeFlight
+                let triageButtons = renderedButtons (fst waiting)
+
+                Expect.isTrue
+                    (triageButtons |> List.exists (fun (label, enabled) -> label = "Ouvrir un autre dossier…" && enabled))
+                    "l'ouverture de dossier reste active pendant la réanalyse (exception 2)"
+
+                Expect.equal (triageButtons |> List.filter snd |> List.map fst) [ "Ouvrir un autre dossier…" ] "seule l'ouverture de dossier reste active pendant la réanalyse"
+
+                // Vol d'une suppression (vue tri) : tout est grisé, ouverture
+                // comprise ; puis santé du grisage : une fois atterri, les
+                // actions reviennent.
+                withPhotos (fun photos ->
+                    let deleteFlight =
+                        init ()
+                        |> fst
+                        |> step (FolderSelected photos)
+                        |> step DeleteTandemRequested
+                        |> takeOff DeleteTandemConfirmed
+
+                    let deleteButtons = renderedButtons (fst deleteFlight)
+
+                    Expect.isFalse (deleteButtons |> List.exists snd) "toutes les actions sont grisées pendant la suppression, ouverture comprise"
+
+                    let landedButtons = renderedButtons (landFlight deleteFlight)
+
+                    Expect.isTrue
+                        (landedButtons |> List.exists (fun (label, enabled) -> label = "Supprimer le tandem" && enabled))
+                        "Supprimer le tandem revient actif après la suppression"
+
+                    Expect.isTrue
+                        (landedButtons |> List.exists (fun (label, enabled) -> label = "Ouvrir un autre dossier…" && enabled))
+                        "l'ouverture de dossier revient active après la suppression"))
+        }
+
+        /// RC-06, exception 1 : l'affichage de l'image dans la vue tri ne
+        /// bloque jamais les autres actions — navigation, suppression, ouverture
+        /// de dossier. Vert aujourd'hui : le test verrouille l'exception pour
+        /// que l'implémentation de la règle ne sur-bloque pas.
+        test "RC-06 exception : image display never blocks the triage view" {
+            withPhotos (fun photos ->
+                let triage = init () |> fst |> step (FolderSelected photos)
+                Expect.equal triage.Screen (Working Triaging) "précondition : vue de tri"
+
+                // Décollé : la photo suivante est demandée, son JPG décode
+                // encore (commande en vol).
+                let loadFlight = takeOff NextClicked triage
+                Expect.equal (fst loadFlight).CurrentIndex 1 "la navigation change immédiatement, sans attendre le JPG"
+
+                // Pendant le vol du chargement, la navigation continue : Next
+                // et Previous passent, l'affichage ne bloque jamais les gestes.
+                let forwarded = step NextClicked (fst loadFlight)
+                Expect.equal forwarded.CurrentIndex 2 "Next passe pendant le chargement"
+                let back = step PreviousClicked forwarded
+                Expect.equal back.CurrentIndex 1 "Previous passe pendant le chargement"
+
+                // Pendant le vol du chargement, la suppression reste possible.
+                let asked = step DeleteTandemRequested (fst loadFlight)
+                Expect.equal asked.Screen (Confirming(Triaging, DeleteTandem "P2")) "la suppression reste possible pendant le chargement"
+
+                // Exception 1, exemple explicite de la règle : ouvrir un
+                // dossier reste possible pendant le chargement d'une image.
+                let openDuringLoad = takeOff (FolderSelected photos) (fst loadFlight)
+
+                Expect.stringContains (fst openDuringLoad).Status "Analyse du dossier"
+                    "l'ouverture reste possible pendant le chargement d'une image"
+
+                Expect.isFalse (List.isEmpty (List.ofSeq (snd openDuringLoad)))
+                    "une nouvelle analyse part pendant le chargement d'une image"
+
+                let cancelled = step DeleteTandemCancelled asked
+                Expect.equal cancelled.Screen (Working Triaging) "retour au tri après refus"
+
+                // Le chargement atterrit sur l'état courant : échec attendu,
+                // les JPG de fixture sont vides.
+                let landed = landFlight (cancelled, snd loadFlight)
+                Expect.stringContains landed.Status "Impossible d'afficher" "le chargement atterrit pendant que le tri a continué")
+        }
+
+        /// RC-06, exception 2 : l'ouverture d'un dossier est possible pendant
+        /// une analyse ou une réanalyse — y compris la réanalyse post-rangement,
+        /// le vol suivi par le drapeau où l'utilisateur attend dans le tri. La
+        /// dernière demande gagne, le résultat dépassé est ignoré (garde
+        /// ScanRequestId) et son drapeau se lève. Vert aujourd'hui : le test
+        /// verrouille l'exception.
+        test "RC-06 exception : opening a folder during an analysis or rescan supersedes it" {
+            withPellicule (fun pellicule ->
+                withPhotos (fun photos ->
+                    // Vol d'analyse de pellicule, interrompu par l'ouverture
+                    // de photos : la dernière demande gagne.
+                    let pelliculeFlight = init () |> fst |> takeOff (FolderSelected pellicule)
+                    let photosFlight = takeOff (FolderSelected photos) (fst pelliculeFlight)
+
+                    let photosLanded = landFlight photosFlight
+                    Expect.equal photosLanded.Screen (Working Triaging) "le dossier ouvert en dernier s'affiche"
+                    Expect.equal photosLanded.Scan.OrganizedTandems.Length 3 "le scan affiché est celui de photos"
+
+                    // Le résultat retardé de pellicule atterrit après : ignoré.
+                    let afterStale = landFlight (photosLanded, snd pelliculeFlight)
+                    Expect.equal afterStale.Screen (Working Triaging) "le résultat dépassé ne change pas l'écran"
+                    Expect.equal afterStale.Scan.OrganizedTandems.Length 3 "le résultat dépassé ne change pas le scan"
+
+                    // Vol de réanalyse de photos, interrompu par l'ouverture
+                    // de pellicule : même supersede.
+                    let rescanFlight = takeOff RescanRequested afterStale
+                    let pelliculeFlight2 = takeOff (FolderSelected pellicule) (fst rescanFlight)
+
+                    let pelliculeLanded = landFlight pelliculeFlight2
+                    Expect.equal pelliculeLanded.Screen (Working Organizing) "pellicule propose son organisation"
+                    Expect.equal pelliculeLanded.Scan.TandemsToOrganize.Length 3 "le scan affiché est celui de pellicule"
+
+                    let afterStaleRescan = landFlight (pelliculeLanded, snd rescanFlight)
+
+                    Expect.equal afterStaleRescan.Scan.TandemsToOrganize.Length 3
+                        "le résultat dépassé de la réanalyse ne change pas le scan"
+
+                    // Vol de la réanalyse post-rangement — le vol suivi par
+                    // le drapeau RC-06 où l'utilisateur attend dans le tri :
+                    // l'ouverture reste sa porte de sortie (exception 2).
+                    let organizeConfirming =
+                        init ()
+                        |> fst
+                        |> step (FolderSelected pellicule)
+                        |> step OrganizeRequested
+
+                    let waiting = landOneWave (takeOff OrganizeConfirmed organizeConfirming)
+
+                    Expect.equal
+                        (fst waiting).Screen
+                        (Working Triaging)
+                        "précondition : attente dans la vue tri pendant la réanalyse post-rangement"
+
+                    let escapeRescan = takeOff (FolderSelected photos) (fst waiting)
+
+                    Expect.stringContains
+                        (fst escapeRescan).Status
+                        "Analyse du dossier"
+                        "l'ouverture reste possible pendant la réanalyse suivie (exception 2)"
+
+                    let photosAfterEscape = landFlight escapeRescan
+
+                    Expect.equal photosAfterEscape.Screen (Working Triaging) "le dossier ouvert pendant la réanalyse s'affiche"
+                    Expect.equal photosAfterEscape.Scan.OrganizedTandems.Length 3 "le scan affiché est celui de photos"
+
+                    // La réanalyse dépassée atterrit : ignorée, le scan de
+                    // photos reste — et son drapeau se lève, la main revient.
+                    let afterStaleRescan2 = landFlight (photosAfterEscape, snd waiting)
+
+                    Expect.equal afterStaleRescan2.Scan.OrganizedTandems.Length 3
+                        "le résultat dépassé de la réanalyse ne change pas le scan"
+
+                    let navigated = step NextClicked afterStaleRescan2
+
+                    Expect.equal navigated.CurrentIndex 1
+                        "le drapeau de la réanalyse dépassée est levé : la navigation repasse"))
         } ]
