@@ -25,9 +25,10 @@
   implémentation TDD → vérification utilisateur → commit) vit dans `docs/SPEC-UC.md`
   (agents-shared) : la lire avant de démarrer une fonctionnalité ou une correction.
 - Spécifique au projet : UC dans `docs/usecases/` (un fichier par UC) ; scénarios exécutables
-  dans `tests/RawTandem.UI.Tests/ScenarioTests.fs` avec l'interpréteur `step` (le test ne joue
+  dans `tests/RawTandem.ScenarioTests/` (un fichier par UC/règle sous `Specs/`, miroir du nom du
+  document ; harnais sous `Harness/`) avec l'interpréteur `step` (le test ne joue
   que les gestes de l'utilisateur, les commandes Elmish sont exécutées réellement en cascade,
-  vraie corbeille OS sur dossier temporaire).
+  vraie corbeille OS sur dossier temporaire) ; le miroir machine vit dans `tests/RawTandem.UI.Tests/StateTests.fs`.
 - **Proposer les tests avant de les écrire** : les tests issus d'une discussion RC/UC (E2E)
   sont d'abord proposés en liste nommée — un nom par test, l'attendu rouge/vert aujourd'hui,
   ce qu'il verrouille — et validés par l'utilisateur avant rédaction ; les tests TDD
@@ -103,7 +104,7 @@ Ces fichiers sont des symlinks vers `~/Source/agents-shared/` :
 
 ### Couverture de code (systématique)
 - **Règle générique : lire `docs/COVERAGE-GENERIC.md`** — quand toute la suite de tests est verte à la fin d'un changement, mesurer la couverture **sans qu'on le demande, avant de clore le changement** (un changement vert sans mesure n'est pas terminé) et rapporter les chiffres par assemblage **avec l'écart depuis la mesure précédente** ; les tests ignorés (skipped) comptent comme verts avec leur raison ; l'historique vit dans `docs/COVERAGE.md` (une ligne par mesure, la dernière ligne est la référence), la plateforme y est notée quand elle change et le delta se lit entre mesures de même plateforme.
-- Spécifique au projet : `dotnet test tests/RawTandem.Core.Tests --collect:"XPlat Code Coverage"` puis idem pour `tests/RawTandem.UI.Tests` (nettoyer d'abord les `TestResults/` pour ne fusionner que les runs du jour), rapports fusionnés via ReportGenerator dans `coveragereport/` (types `TextSummary;Html`), lecture dans `coveragereport/Summary.txt`. Plafond connu : App/Main/Program (wiring Avalonia) à 0 % en headless.
+- Spécifique au projet : `dotnet test tests/RawTandem.Core.Tests --collect:"XPlat Code Coverage"` puis idem pour `tests/RawTandem.UI.Tests` puis `tests/RawTandem.ScenarioTests` (nettoyer d'abord les `TestResults/` pour ne fusionner que les runs du jour), rapports fusionnés via ReportGenerator dans `coveragereport/` (types `TextSummary;Html`), lecture dans `coveragereport/Summary.txt`. Plafond connu : Program (wiring Avalonia) à 0 % en headless ; pour les badges, `State.fs` et `App`/`Main` sont mesurés sur la fusion `UI.Tests` + `ScenarioTests`.
 
 ### DRY
 - Éviter la répétition de code. Extraire les conditions répétées en fonctions helpers.

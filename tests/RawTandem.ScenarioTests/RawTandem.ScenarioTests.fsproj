@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <!-- Le projet de tests garde son [<EntryPoint>] Expecto ; on désactive
+         le main généré par Microsoft.NET.Test.Sdk (conflit FS0433 sinon). -->
+    <GenerateProgramFile>false</GenerateProgramFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Harness/Headless.fs" />
+    <Compile Include="Harness/Steps.fs" />
+    <Compile Include="Harness/Fixtures.fs" />
+    <Compile Include="Harness/Rendering.fs" />
+    <Compile Include="Specs/OrganiserEtTrierDossier.fs" />
+    <Compile Include="Specs/TrierDossierDejaOrganise.fs" />
+    <Compile Include="Specs/RC01.fs" />
+    <Compile Include="Specs/RC04.fs" />
+    <Compile Include="Specs/RC05.fs" />
+    <Compile Include="Specs/RC06.fs" />
+    <Compile Include="Main.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="12.1.0" />
+    <PackageReference Include="Avalonia.Headless" Version="12.1.0" />
+    <PackageReference Include="coverlet.collector" Version="10.1.0">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Expecto" Version="11.1.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
+    <PackageReference Include="YoloDev.Expecto.TestSdk" Version="0.16.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\RawTandem.UI\RawTandem.UI.fsproj" />
+  </ItemGroup>
+
+</Project>

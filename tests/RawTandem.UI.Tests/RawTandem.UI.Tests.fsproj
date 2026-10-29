@@ -9,7 +9,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="ScenarioTests.fs" />
     <Compile Include="StateTests.fs" />
   </ItemGroup>
 

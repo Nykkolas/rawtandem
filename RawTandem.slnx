@@ -5,6 +5,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/RawTandem.Core.Tests/RawTandem.Core.Tests.fsproj" />
+    <Project Path="tests/RawTandem.ScenarioTests/RawTandem.ScenarioTests.fsproj" />
     <Project Path="tests/RawTandem.UI.Tests/RawTandem.UI.Tests.fsproj" />
   </Folder>
 </Solution>

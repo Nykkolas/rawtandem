@@ -4,7 +4,8 @@ Règles transversales applicables à plusieurs UC. Elles ne se répètent pas
 dans les scénarios : un UC qui s'en réclame les référence dans son contexte
 (`règles communes: RC-01, RC-02`) ou inline à une ou des étape(s) particulière(s).
 
-Leur couverture vit dans `tests/RawTandem.UI.Tests/ScenarioTests.fs` :
+Leur couverture vit dans `tests/RawTandem.ScenarioTests/` (un fichier par
+règle, `Specs/RCxx.fs` — cartouche de chaque fichier : couverture et non couvert) :
 - ***coverage: générique*** : la règle a son propre test E2E dédié, valable pour
   toutes les vues/UC qui s'en réclament. Il est écrit à la validation de la règle
   (rouge pour la bonne raison s'il y a du nouveau), relu par l'utilisateur avant

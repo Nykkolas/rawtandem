@@ -8,7 +8,6 @@ open RawTandem.Core.FolderScan
 open RawTandem.Core.Organization
 open RawTandem.Core.Deletion
 open RawTandem.UI.State
-open RawTandem.UI.ScenarioTests
 
 /// Image factice pour les tests : seul le fait qu'elle soit l'image courante
 /// (ou une obsolète) compte, jamais les pixels.
@@ -1414,4 +1413,4 @@ let stateTests =
 
 [<EntryPoint>]
 let main args =
-    runTestsWithCLIArgs [] args (testList "RawTandem.UI tests" [ stateTests; scenarioTests ])
+    runTestsWithCLIArgs [] args (testList "RawTandem.UI tests" [ stateTests ])
