@@ -824,23 +824,14 @@ let private updateCore (msg: Msg) (state: State) : State * Cmd<Msg> =
                 // L'utilisateur a quitté l'organisation : le plan est obsolète.
                 { state with InFlight = None }, Cmd.none
 
-    | OrganizePlanningFailed(folderPath, error) ->
+    | OrganizePlanningFailed(_, error) ->
         // RC-06 : le vol du plan est terminé en échec, le drapeau se lève.
-        if resultIsFromAnotherFolder state folderPath then
-            // L'échec réel d'un dossier quitté reste annoncé, sans rien
-            // d'autre : l'écran et le scan du dossier courant ne bougent pas.
-            { state with
-                Status = sprintf "%sPréparation du plan impossible : %s" ErrorStatusPrefix error
-                InFlight = None },
-            Cmd.none
-        else
-            match state.Screen with
-            | Working Organizing ->
-                { state with
-                    Status = sprintf "%sPréparation du plan impossible : %s" ErrorStatusPrefix error
-                    InFlight = None },
-                Cmd.none
-            | Working _ | Confirming _ -> { state with InFlight = None }, Cmd.none
+        // VISION : l'échec n'est jamais avalé — quel que soit l'écran affiché
+        // (question comprise), seul le bandeau bas parle.
+        { state with
+            Status = sprintf "%sPréparation du plan impossible : %s" ErrorStatusPrefix error
+            InFlight = None },
+        Cmd.none
 
     | OrganizeConfirmed ->
         match state.Screen with
@@ -911,16 +902,15 @@ let private updateCore (msg: Msg) (state: State) : State * Cmd<Msg> =
             else
                 withReanalysisInFlight (reportBackgroundFailure state (movesOutcomeStatus outcome)), refresh
 
-    | OrganizeNothingToMove(folderPath) ->
+    | OrganizeNothingToMove _ ->
         // RC-06 : le vol de l'exécution se termine sans rien déplacer, le
-        // drapeau se lève.
-        if resultIsFromAnotherFolder state folderPath then
-            { state with Status = "Rien à déplacer : le dossier a changé entre-temps."; InFlight = None }, Cmd.none
-        else
-            match state.Screen with
-            | Working Organizing ->
-                { state with Status = "Rien à déplacer : le dossier a changé entre-temps."; InFlight = None }, Cmd.none
-            | Working _ | Confirming _ -> { state with InFlight = None }, Cmd.none
+        // drapeau se lève. VISION : le bilan n'est jamais avalé — quel que
+        // soit l'écran affiché (question comprise), seul le bandeau bas
+        // parle, ni l'écran ni la question ne bougent.
+        { state with
+            Status = "Rien à déplacer : le dossier a changé entre-temps."
+            InFlight = None },
+        Cmd.none
 
     | OrganizeFailed(folderPath, error) ->
         // RC-06 : le vol est terminé en échec, le drapeau se lève.

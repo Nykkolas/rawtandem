@@ -685,16 +685,49 @@ let stateTests =
                     Expect.stringContains state.Status "annul" "annulation signalée"
                 }
 
-                test "OrganizePlanningFailed outside the Organizing screen is ignored" {
-                    let expected = init' ()
-                    let state = expected |> update' (OrganizePlanningFailed(fixtureFolderPath, "acces refuse"))
-                    Expect.equal state expected "rien ne change hors de l'écran d'organisation"
+                test "OrganizePlanningFailed outside the Organizing screen is announced in the status only" {
+                    // VISION : un échec n'est jamais avalé — hors de l'écran
+                    // d'organisation, seul le bandeau bas parle, l'écran ne
+                    // bouge pas.
+                    let state = init' () |> update' (OrganizePlanningFailed(fixtureFolderPath, "acces refuse"))
+
+                    Expect.equal state.Screen (Working Home) "l'écran ne bouge pas"
+                    Expect.stringContains state.Status "acces refuse" "l'échec reste visible dans le bandeau bas"
                 }
 
-                test "OrganizeNothingToMove outside the Organizing screen is ignored" {
-                    let expected = init' ()
-                    let state = expected |> update' (OrganizeNothingToMove fixtureFolderPath)
-                    Expect.equal state expected "rien ne change hors de l'écran d'organisation"
+                test "OrganizeNothingToMove outside the Organizing screen is announced in the status only" {
+                    // VISION : idem pour le bilan — jamais avalé.
+                    let state = init' () |> update' (OrganizeNothingToMove fixtureFolderPath)
+
+                    Expect.equal state.Screen (Working Home) "l'écran ne bouge pas"
+                    Expect.stringContains state.Status "Rien à déplacer" "le bilan reste visible dans le bandeau bas"
+                }
+
+                test "OrganizePlanningFailed while a question is displayed is announced in the status only" {
+                    // VISION : jamais avalé, même pendant une question — le
+                    // bandeau bas parle, la question reste entière. Écart
+                    // machine : les gardes RC-06 ferment les chemins
+                    // utilisateur, l'état est construit à la main.
+                    let state =
+                        { triaging' () with Screen = Confirming(Triaging, DeleteTandem fixtureStems.[0]) }
+                        |> update' (OrganizePlanningFailed(fixtureFolderPath, "acces refuse"))
+
+                    Expect.equal state.Screen (Confirming(Triaging, DeleteTandem "P1")) "la question reste entière"
+                    Expect.stringContains state.Status "acces refuse" "l'échec est visible dans le bandeau bas"
+                    Expect.isNone state.InFlight "le drapeau du vol du plan est levé"
+                }
+
+                test "OrganizeNothingToMove while a question is displayed is announced in the status only" {
+                    // VISION : le bilan du rangement n'est pas avalé par la
+                    // question affichée — l'utilisateur répond en sachant ce
+                    // que le rangement a réellement fait.
+                    let state =
+                        { triaging' () with Screen = Confirming(Triaging, DeleteTandem fixtureStems.[0]) }
+                        |> update' (OrganizeNothingToMove fixtureFolderPath)
+
+                    Expect.equal state.Screen (Confirming(Triaging, DeleteTandem "P1")) "la question reste entière"
+                    Expect.stringContains state.Status "Rien à déplacer" "le bilan est visible dans le bandeau bas"
+                    Expect.isNone state.InFlight "le drapeau du vol d'exécution est levé"
                 }
 
                 test "OrganizeCancelled without a matching pending action is ignored" {

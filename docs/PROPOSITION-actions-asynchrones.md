@@ -1,12 +1,11 @@
 # PROPOSITION - Passe complète sur les actions asynchrones
 
-Statut : **en cours de traitement** — la passe a été réalisée les 2026-10-28/29 :
-RC-06 (règle validée par l'utilisateur) implémentée pour **tous** les vols (garde
-dans `update` + grisage des widgets), garde RC-05 pour la sélection de dossier,
-modalité du picker. Restent ouverts : P3 (statuts avalés pendant une question,
-Majeur 8) et P4 (garde d'écran de F5 à l'accueil) — voir le suivi ci-dessous.
-À supprimer une fois le reste traité (comme `PROPOSITION-organisation.md`
-avant elle).
+Statut : **presque clos** — la passe a été réalisée les 2026-10-28/29 : RC-06
+(règle validée par l'utilisateur) implémentée pour **tous** les vols (garde dans
+`update` + grisage des widgets), garde RC-05 pour la sélection de dossier,
+modalité du picker, statuts jamais avalés (Majeur 8 réglé : `OrganizePlanningFailed`
+et `OrganizeNothingToMove` écrivent toujours le bandeau bas). Reste ouvert : P4
+(garde d'écran de F5 à l'accueil). À supprimer une fois P4 traité.
 
 ## Suivi de traitement (2026-10-29)
 
@@ -16,7 +15,7 @@ avant elle).
 | 2. Extension UC « recliquer Ranger pendant le rangement » | ✅ couvert par RC-06 sans extension UC (test générique « un second rangement est sans effet pendant le vol ») |
 | 3. Course du picker (UC/RC) | ✅ traitée **sans nouvelle règle** : RC-05 la couvre par principe ; garde dans `update` (no-op silencieux, actions du bandeau exemptées) + modalité du picker (fenêtre désactivée pendant le dialogue, `Main.fs`) — le chemin utilisateur est fermé d'amont par RC-06 (ouverture refusée pendant le vol du plan), la garde reste le filet |
 | 4. Marqueur d'opération en vol | ✅ champ `InFlight` + DU `InFlightOperation` (`AnalyzingFolder`/`ReanalyzingFolder` identifiées par requestId, `PlanningOrganize`, `OrganizeExecution`, `TandemDeletion`) — mécanisme retenu différent du cas d'écran `Operating` proposé, même intention ; les résultats dépassés lèvent le drapeau qu'ils retrace |
-| 5. Statuts avalés pendant une question (Majeur 8) | ❌ **reste ouvert (P3)** : `OrganizePlanningFailed` et `OrganizeNothingToMove` pendant `Confirming` tombent encore dans le no-op sans bandeau — quasi inatteignables depuis les gardes RC-06, mais non conformes à VISION (« jamais avalé ») ; pas de test pour l'instant |
+| 5. Statuts avalés pendant une question (Majeur 8) | ✅ **traité (P3, 2026-10-29)** : `OrganizePlanningFailed` et `OrganizeNothingToMove` écrivent toujours le bandeau bas, quel que soit l'écran affiché (question comprise), sans jamais toucher l'écran ni la question — branches avalantes supprimées ; 2 tests unitaires convertis au contrat annoncé + 2 tests nouveaux sous question (rouges avant correction) |
 | 6. Garde `FolderSelected` pendant `Confirming` | ✅ filet : no-op silencieux (statut inchangé), 2 tests E2E « folder selection during a … question is refused » + come-back ; les actions du bandeau ne sont jamais bloquées |
 | 7. Garde d'écran de `RescanRequested` à l'accueil | ❌ **reste ouvert (P4)** : F5 sans dossier reste accepté à l'accueil (statut « Aucun dossier analysé. »), le geste est spec'd sur l'écran d'organisation |
 
