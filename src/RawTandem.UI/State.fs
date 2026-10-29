@@ -735,14 +735,15 @@ let private updateCore (msg: Msg) (state: State) : State * Cmd<Msg> =
 
     | RescanRequested ->
         // Geste « Réanalyser » (UC organiser-et-trier-dossier, extensions 2a
-        // et 2b) : le dossier courant est re-scanné en arrière-plan — ni
-        // l'écran ni l'index ni le bandeau ne bougent, seul le scan est
-        // remplacé (FolderRescanned, garde de fraîcheur requestId). Une
-        // question affichée n'est jamais refermée : le geste est ignoré
-        // tant qu'elle est là (RC-05 — il est aussi grisé dans la vue, la
-        // garde reste seule autorité).
+        // et 2b) : spec'd sur l'écran d'organisation — le bouton n'existe
+        // qu'à cet endroit et le raccourci F5 suit le même destin (la garde
+        // dans update couvre tous les producteurs de messages : bouton,
+        // clavier, autres fronts). Le dossier courant est re-scanné en
+        // arrière-plan — ni l'écran ni l'index ni le bandeau ne bougent,
+        // seul le scan est remplacé (FolderRescanned, garde de fraîcheur
+        // requestId).
         match state.Screen with
-        | Working _ ->
+        | Working Organizing ->
             match state.FolderPath with
             | Some folder ->
                 // RC-06 : la réanalyse est en vol dès le geste — silencieuse
@@ -753,7 +754,7 @@ let private updateCore (msg: Msg) (state: State) : State * Cmd<Msg> =
             | None ->
                 { state with Status = sprintf "%sAucun dossier analysé." ErrorStatusPrefix },
                 Cmd.none
-        | Confirming _ -> state, Cmd.none
+        | _ -> state, Cmd.none
 
     // ---------- Organisation ----------
 

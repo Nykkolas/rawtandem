@@ -1657,18 +1657,26 @@ let scenarioTests =
                     Expect.equal afterStale.Screen (Working Triaging) "le résultat dépassé ne change pas l'écran"
                     Expect.equal afterStale.Scan.OrganizedTandems.Length 3 "le résultat dépassé ne change pas le scan"
 
-                    // Vol de réanalyse de photos, interrompu par l'ouverture
-                    // de pellicule : même supersede.
-                    let rescanFlight = takeOff RescanRequested afterStale
-                    let pelliculeFlight2 = takeOff (FolderSelected pellicule) (fst rescanFlight)
-
+                    // Vol de réanalyse demandée (F5) depuis l'écran
+                    // d'organisation de pellicule, interrompu par l'ouverture
+                    // de photos : même supersede.
+                    let pelliculeFlight2 = takeOff (FolderSelected pellicule) afterStale
                     let pelliculeLanded = landFlight pelliculeFlight2
+
                     Expect.equal pelliculeLanded.Screen (Working Organizing) "pellicule propose son organisation"
                     Expect.equal pelliculeLanded.Scan.TandemsToOrganize.Length 3 "le scan affiché est celui de pellicule"
 
-                    let afterStaleRescan = landFlight (pelliculeLanded, snd rescanFlight)
+                    let rescanFlight = takeOff RescanRequested pelliculeLanded
+                    let photosFlight2 = takeOff (FolderSelected photos) (fst rescanFlight)
 
-                    Expect.equal afterStaleRescan.Scan.TandemsToOrganize.Length 3
+                    let photosLanded2 = landFlight photosFlight2
+
+                    Expect.equal photosLanded2.Screen (Working Triaging) "photos s'affiche à la place"
+                    Expect.equal photosLanded2.Scan.OrganizedTandems.Length 3 "le scan affiché est celui de photos"
+
+                    let afterStaleRescan = landFlight (photosLanded2, snd rescanFlight)
+
+                    Expect.equal afterStaleRescan.Scan.OrganizedTandems.Length 3
                         "le résultat dépassé de la réanalyse ne change pas le scan"
 
                     // Vol de la réanalyse post-rangement — le vol suivi par

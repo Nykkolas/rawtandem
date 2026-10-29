@@ -246,6 +246,40 @@ let stateTests =
 
                     Expect.equal state.Screen (Working Organizing) "l'écran ne bouge pas"
                     Expect.stringContains state.Status "Aucun dossier" "l'état incohérent est signalé, pas de crash"
+                }
+
+                test "RescanRequested at the Home screen is a no-op" {
+                    // P4 : le geste est spec'd sur l'écran d'organisation
+                    // (UC 2a/2b) — le bouton n'y existe qu'à cet endroit et
+                    // le raccourci F5 suit le même destin (la garde vit dans
+                    // update, elle couvre tous les producteurs de messages).
+                    let expected = init' ()
+                    let state = expected |> update' RescanRequested
+
+                    Expect.equal state expected "rien ne bouge à l'accueil"
+                }
+
+                test "RescanRequested at the Home screen with an analyzed folder is a no-op" {
+                    // Atteignable quand l'analyse échoue : retour à l'accueil,
+                    // dossier encore pointé — F5 n'y lance rien pour autant.
+                    let expected =
+                        init' ()
+                        |> update' (FolderSelected fixtureFolderPath)
+                        |> update' (FolderScanFailed(1, fixtureFolderPath, "dossier verrouille"))
+
+                    let state = expected |> update' RescanRequested
+
+                    Expect.equal state.Screen (Working Home) "on reste à l'accueil"
+                    Expect.isNone state.InFlight "aucune réanalyse n'est lancée"
+                }
+
+                test "RescanRequested in the Triaging view is a no-op" {
+                    // P4 : idem en tri — le geste appartient à l'écran
+                    // d'organisation.
+                    let expected = triaging' ()
+                    let state = expected |> update' RescanRequested
+
+                    Expect.equal state expected "rien ne bouge dans le tri"
                 } ]
 
           testList
