@@ -24,6 +24,15 @@ open RawTandem.UI.State
 
 /// Ouvre le sélecteur de dossier natif et dispatch le chemin choisi.
 /// Aucun dossier choisi (Esc) : aucun message, rien ne change.
+///
+/// Modalité UX : le sélecteur natif n'est pas modal sur tous les backends
+/// (portail freedesktop sous Linux notamment) — la fenêtre principale est
+/// désactivée le temps du dialogue, comme un dialogue modal le ferait :
+/// aucune raison de sélectionner deux dossiers, et aucune action de l'écran
+/// ne peut être démarrée pendant le choix. Affordance uniquement : la garde
+/// vit dans update — une question peut s'afficher pendant que le dialogue
+/// est ouvert (résultat d'arrière-plan), seul update peut refuser le
+/// dossier choisi (RC-05).
 let private pickFolder (source: obj) (dispatch: Msg -> unit) : Async<unit> =
     async {
         match source with
@@ -31,17 +40,26 @@ let private pickFolder (source: obj) (dispatch: Msg -> unit) : Async<unit> =
             let topLevel = TopLevel.GetTopLevel control
 
             if not (isNull (box topLevel)) then
-                let! folders =
-                    topLevel.StorageProvider.OpenFolderPickerAsync(FolderPickerOpenOptions(AllowMultiple = false))
-                    |> Async.AwaitTask
+                match topLevel with
+                | :? Window as window -> window.IsEnabled <- false
+                | _ -> ()
 
-                match List.ofSeq folders |> List.tryHead with
-                | Some folder ->
-                    let path = folder.TryGetLocalPath()
+                try
+                    let! folders =
+                        topLevel.StorageProvider.OpenFolderPickerAsync(FolderPickerOpenOptions(AllowMultiple = false))
+                        |> Async.AwaitTask
 
-                    if not (isNull (box path)) then
-                        dispatch (FolderSelected path)
-                | None -> ()
+                    match List.ofSeq folders |> List.tryHead with
+                    | Some folder ->
+                        let path = folder.TryGetLocalPath()
+
+                        if not (isNull (box path)) then
+                            dispatch (FolderSelected path)
+                    | None -> ()
+                finally
+                    match topLevel with
+                    | :? Window as window -> window.IsEnabled <- true
+                    | _ -> ()
         | _ -> ()
     }
 

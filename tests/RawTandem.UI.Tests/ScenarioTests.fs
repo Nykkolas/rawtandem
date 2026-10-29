@@ -1091,6 +1091,114 @@ let scenarioTests =
                 "Ranger les RAW est actif hors question"
         }
 
+        // ---------- RC-05 : garde de la sélection de dossier ----------
+        //
+        // La fenêtre est désactivée pendant le picker (modalité, Main.fs) :
+        // aucun geste de l'utilisateur n'est possible pendant le choix. Mais
+        // une question peut s'afficher pendant que le picker est ouvert —
+        // pas par un geste, par un résultat d'arrière-plan : « Ranger les
+        // RAW » lancé avant l'ouverture du picker (le vol du plan ne porte
+        // pas encore de drapeau, les boutons restent actifs), dont le plan
+        // arrive et affiche le bandeau sous le dialogue — la fenêtre
+        // désactivée bloque les clics, pas update ni le rendu. Le dossier
+        // choisi arrive alors dans update pendant Confirming : RC-05 le
+        // refuse. Le picker et sa modalité sont hors de portée des tests
+        // (dialogue OS) : seule la garde dans update protège, ici et pour
+        // tout autre front sans fenêtre. Rouge aujourd'hui : FolderSelected
+        // remplace le dossier (et son scan) sous la question.
+
+        /// RC-05, garde : un dossier choisi pendant la question de rangement
+        /// est refusé — la question reste entière, le dossier courant et son
+        /// scan ne changent pas, aucune analyse ne part. No-op silencieux,
+        /// comme les autres gardes de question : c'est un filet technique
+        /// (le chemin utilisateur est fermé d'amont par RC-06), l'action
+        /// visible est celle du bandeau.
+        test "RC-05 common rule : folder selection during an organizing question is refused" {
+            withPellicule (fun pellicule ->
+                withPhotos (fun photos ->
+                    let confirming =
+                        init ()
+                        |> fst
+                        |> step (FolderSelected pellicule)
+                        |> step OrganizeRequested
+
+                    Expect.equal
+                        confirming.Screen
+                        (Confirming(Organizing, OrganizeFolder 3))
+                        "précondition : la question de rangement est affichée"
+
+                    let attempt = takeOff (FolderSelected photos) confirming
+
+                    Expect.equal (fst attempt).Screen confirming.Screen "la question reste affichée, l'écran ne change pas"
+
+                    Expect.equal (fst attempt).FolderPath confirming.FolderPath "le dossier courant ne change pas"
+
+                    Expect.equal (fst attempt).ScanRequestId confirming.ScanRequestId "aucune nouvelle demande de scan"
+
+                    Expect.isTrue
+                        (List.isEmpty (List.ofSeq (snd attempt)))
+                        "aucune analyse n'est lancée pendant la question"))
+        }
+
+        /// RC-05, garde : même refus pendant la question de suppression —
+        /// sinon la suppression confirmée s'exécuterait sur le scan du
+        /// dossier choisi, pas celui que la question annonçait.
+        test "RC-05 common rule : folder selection during a deletion question is refused" {
+            withPhotos (fun photos ->
+                withPellicule (fun pellicule ->
+                    let confirming =
+                        init ()
+                        |> fst
+                        |> step (FolderSelected photos)
+                        |> step DeleteTandemRequested
+
+                    Expect.equal
+                        confirming.Screen
+                        (Confirming(Triaging, DeleteTandem "P1"))
+                        "précondition : la question de suppression est affichée"
+
+                    let attempt = takeOff (FolderSelected pellicule) confirming
+
+                    Expect.equal
+                        (fst attempt).Screen
+                        (Confirming(Triaging, DeleteTandem "P1"))
+                        "la question reste affichée, l'écran ne change pas"
+
+                    Expect.equal (fst attempt).FolderPath confirming.FolderPath "le dossier courant ne change pas"
+
+                    Expect.equal (fst attempt).ScanRequestId confirming.ScanRequestId "aucune nouvelle demande de scan"
+
+                    Expect.isTrue
+                        (List.isEmpty (List.ofSeq (snd attempt)))
+                        "aucune analyse n'est lancée pendant la question"))
+        }
+
+        /// RC-05, santé de la garde : la question tranchée, la sélection de
+        /// dossier fonctionne de nouveau. Vert aujourd'hui — il verrouille
+        /// le retour pour que la garde ne sur-bloque pas.
+        test "RC-05 common rule : folder selection comes back once the question is answered" {
+            withPhotos (fun photos ->
+                let answered =
+                    init ()
+                    |> fst
+                    |> step (FolderSelected photos)
+                    |> step DeleteTandemRequested
+                    |> step DeleteTandemCancelled
+
+                Expect.equal answered.Screen (Working Triaging) "précondition : la question est tranchée (refusée)"
+
+                let reopened = takeOff (FolderSelected photos) answered
+
+                Expect.stringContains
+                    (fst reopened).Status
+                    "Analyse du dossier"
+                    "la sélection de dossier fonctionne de nouveau après la réponse"
+
+                Expect.isFalse
+                    (List.isEmpty (List.ofSeq (snd reopened)))
+                    "une nouvelle analyse part après la réponse")
+        }
+
         // ---------- RC-06 : actions asynchrones juste nécessaires (docs/usecases/regles-communes.md) ----------
         //
         // Deux niveaux d'observation, comme RC-05 : la garde vit dans update
@@ -1243,24 +1351,195 @@ let scenarioTests =
                 Expect.equal askedAfter.Screen (Confirming(Triaging, DeleteTandem "P2")) "la main rendue : la suppression repasse pour la photo courante")
         }
 
+        /// RC-06, garde : pendant le calcul du plan (« Préparation du
+        /// plan… »), aucun geste de l'écran d'organisation ne passe —
+        /// c'est le seul vol où l'ouverture de dossier est refusée aussi
+        /// (aucune exception de la règle ne s'applique : ni affichage
+        /// d'image, ni analyse, ni réanalyse). Ce vol atterrit sur le
+        /// bandeau de question : la main passe par elle. Rouge
+        /// aujourd'hui : le vol du plan ne porte pas de drapeau.
+        test "RC-06 common rule : organizing gestures are no-ops while the organize plan is in flight" {
+            withPellicule (fun pellicule ->
+                let organizing = init () |> fst |> step (FolderSelected pellicule)
+
+                Expect.equal organizing.Screen (Working Organizing) "précondition : écran d'organisation, 3 RAW à ranger"
+
+                // Décollé : le plan part (« Préparation du plan… »), le
+                // bandeau de question ne s'affiche qu'à son retour.
+                let flight = takeOff OrganizeRequested organizing
+
+                Expect.equal (fst flight).Screen (Working Organizing) "aucune question avant le retour du plan"
+
+                Expect.stringContains (fst flight).Status "Préparation du plan" "le vol est visible dans le bandeau bas"
+
+                // RC-06 : « Passer au tri » ne passe pas pendant le vol.
+                let goToTriage = step StartTriagingClicked (fst flight)
+                Expect.equal goToTriage.Screen (Working Organizing) "Passer au tri est sans effet pendant le vol du plan"
+
+                // RC-06 : recliquer « Ranger » (double-clic) ne relance rien.
+                let again = step OrganizeRequested (fst flight)
+                Expect.equal again.Screen (Working Organizing) "un second rangement est sans effet pendant le vol du plan"
+                Expect.equal again.Status (fst flight).Status "le statut ne bouge pas non plus"
+
+                // RC-06 : Réanalyser ne lance rien pendant le vol (l'égalité
+                // d'état seule serait un faux vert — une réanalyse du même
+                // dossier rend un scan identique : la preuve observable est
+                // qu'aucune commande n'est planifiée).
+                let rescanAttempt = takeOff RescanRequested (fst flight)
+                Expect.equal (fst rescanAttempt) (fst flight) "Réanalyser est sans effet pendant le vol du plan"
+                Expect.isTrue (List.isEmpty (List.ofSeq (snd rescanAttempt))) "Réanalyser ne lance aucune commande pendant le vol du plan"
+
+                // RC-06 : l'ouverture de dossier est refusée aussi — le seul
+                // vol sans exception.
+                let openAttempt = takeOff (FolderSelected pellicule) (fst flight)
+                Expect.equal (fst openAttempt) (fst flight) "ouvrir un dossier est sans effet pendant le vol du plan"
+                Expect.isTrue (List.isEmpty (List.ofSeq (snd openAttempt))) "aucune nouvelle analyse n'est lancée pendant le vol du plan"
+
+                // Atterrissage : le vol du plan atterrit sur le bandeau de
+                // question — la main passe par elle.
+                let landed = landFlight flight
+                Expect.equal landed.Screen (Confirming(Organizing, OrganizeFolder 3)) "le plan atterrit : la question s'affiche"
+
+                let answered = landed |> step OrganizeCancelled
+                Expect.equal answered.Screen (Working Organizing) "question tranchée : retour à l'organisation"
+
+                // La main est rendue : les gestes repassent.
+                let goToTriageAfter = step StartTriagingClicked answered
+                Expect.equal goToTriageAfter.Screen (Working Triaging) "Passer au tri repasse après l'atterrissage")
+        }
+
+        /// RC-06, garde : pendant l'analyse d'un dossier demandé depuis le
+        /// tri (« Analyse du dossier… »), les gestes du tri sont des
+        /// no-ops — ils agiraient sur le scan périmé du dossier quitté.
+        /// L'ouverture d'un autre dossier reste permise (exception 2),
+        /// verrouillée par le test « opening a folder during an analysis or
+        /// rescan supersedes it ». Rouge aujourd'hui : l'analyse ne porte
+        /// pas de drapeau.
+        test "RC-06 common rule : triage gestures are no-ops while a folder analysis is in flight" {
+            withPhotos (fun photos ->
+                withPellicule (fun pellicule ->
+                    let triage = init () |> fst |> step (FolderSelected photos)
+
+                    Expect.equal triage.Screen (Working Triaging) "précondition : vue de tri sur le dossier organisé"
+
+                    // Décollé : un autre dossier est ouvert depuis le tri —
+                    // l'analyse tourne, l'écran reste celui du tri.
+                    let flight = takeOff (FolderSelected pellicule) triage
+
+                    Expect.equal (fst flight).Screen (Working Triaging) "l'écran reste le tri pendant l'analyse"
+
+                    Expect.stringContains (fst flight).Status "Analyse du dossier" "le vol est visible dans le bandeau bas"
+
+                    // RC-06 : la navigation n'agit pas sur le scan périmé.
+                    let navigated = step NextClicked (fst flight)
+
+                    Expect.equal navigated.CurrentIndex (fst flight).CurrentIndex "la navigation est sans effet pendant l'analyse"
+
+                    // RC-06 : Suppr ne peut pas partir sur le scan périmé.
+                    let askedDuring = step DeleteTandemRequested (fst flight)
+                    Expect.equal askedDuring (fst flight) "Suppr est sans effet pendant l'analyse"
+
+                    // RC-06 : le plein écran non plus.
+                    let fullscreen = step FullscreenRequested (fst flight)
+                    Expect.equal fullscreen.DisplayMode Normal "le plein écran est sans effet pendant l'analyse"
+
+                    // Atterrissage : le nouveau dossier s'affiche, la main
+                    // est rendue — le rangement demande passe.
+                    let landed = landFlight flight
+                    Expect.equal landed.Screen (Working Organizing) "le dossier analysé s'affiche"
+                    Expect.equal landed.Scan.TandemsToOrganize.Length 3 "le scan affiché est celui du dossier ouvert"
+
+                    let askedAfter = step OrganizeRequested landed
+
+                    Expect.equal
+                        askedAfter.Screen
+                        (Confirming(Organizing, OrganizeFolder 3))
+                        "la main rendue : le rangement demande passe"))
+        }
+
+        /// RC-06, garde : pendant une réanalyse demandée (F5, écran
+        /// d'organisation), les gestes sont des no-ops. L'ouverture d'un
+        /// autre dossier reste permise (exception 2), verrouillée par le
+        /// test « opening a folder during an analysis or rescan supersedes
+        /// it ». La réanalyse est silencieuse (ni écran ni bandeau ne
+        /// bougent) : le vol n'est observable que par sa commande en
+        /// attente. Rouge aujourd'hui : la réanalyse demandée ne porte pas
+        /// de drapeau.
+        test "RC-06 common rule : organizing gestures are no-ops while a user rescan is in flight" {
+            withPellicule (fun pellicule ->
+                let organizing = init () |> fst |> step (FolderSelected pellicule)
+
+                // Décollé : F5, la réanalyse part — silencieuse pour
+                // l'utilisateur : l'écran, le bandeau et le scan ne bougent
+                // pas, seule la commande en attente prouve le vol (le
+                // drapeau RC-06 posé par update n'est pas un observable
+                // utilisateur — c'est lui qui bloque les gestes).
+                let flight = takeOff RescanRequested organizing
+
+                Expect.equal (fst flight).Screen organizing.Screen "la réanalyse est silencieuse : l'écran ne bouge pas"
+                Expect.equal (fst flight).Status organizing.Status "le bandeau bas ne bouge pas"
+                Expect.equal (fst flight).Scan organizing.Scan "le scan ne bouge pas"
+
+                Expect.isFalse
+                    (List.isEmpty (List.ofSeq (snd flight)))
+                    "précondition : une réanalyse est bien en vol"
+
+                // RC-06 : demander le rangement ne passe pas pendant le vol.
+                let organizeAttempt = takeOff OrganizeRequested (fst flight)
+                Expect.equal (fst organizeAttempt) (fst flight) "Ranger est sans effet pendant la réanalyse"
+                Expect.isTrue (List.isEmpty (List.ofSeq (snd organizeAttempt))) "aucun plan n'est lancé pendant la réanalyse"
+
+                // RC-06 : « Passer au tri » non plus.
+                let goToTriage = step StartTriagingClicked (fst flight)
+                Expect.equal goToTriage.Screen (Working Organizing) "Passer au tri est sans effet pendant la réanalyse"
+
+                // Atterrissage : la main est rendue — le rangement demande
+                // passe de nouveau.
+                let landed = landFlight flight
+                Expect.equal landed.Screen (Working Organizing) "la réanalyse laisse l'écran d'organisation"
+
+                let askedAfter = step OrganizeRequested landed
+
+                Expect.equal
+                    askedAfter.Screen
+                    (Confirming(Organizing, OrganizeFolder 3))
+                    "la main rendue : le rangement demande passe")
+        }
+
         /// RC-06, affordance : pendant un vol, les widgets d'action sont
         /// grisés dans la vraie vue, l'ouverture de dossier comprise —
-        /// sauf pendant la réanalyse, où l'exception 2 la laisse active.
-        /// Rouge aujourd'hui : rien n'est grisé pendant les vols.
+        /// sauf pendant une analyse ou une réanalyse, où l'exception 2 la
+        /// laisse active. Rouge aujourd'hui : rien n'est grisé pendant les vols.
         test "RC-06 common rule : action widgets are grayed while an operation is in flight, and come back after" {
             withPellicule (fun pellicule ->
+                let organizing = init () |> fst |> step (FolderSelected pellicule)
+
                 // Vol de l'exécution du rangement (écran d'organisation) :
                 // tout est grisé, l'ouverture comprise.
-                let organizeFlight =
-                    init ()
-                    |> fst
-                    |> step (FolderSelected pellicule)
-                    |> step OrganizeRequested
-                    |> takeOff OrganizeConfirmed
+                let organizeFlight = organizing |> step OrganizeRequested |> takeOff OrganizeConfirmed
 
                 let organizeButtons = renderedButtons (fst organizeFlight)
 
                 Expect.isFalse (organizeButtons |> List.exists snd) "toutes les actions sont grisées pendant le rangement, ouverture comprise"
+
+                // Vol du plan (« Préparation du plan… », écran
+                // d'organisation) : tout est grisé, ouverture comprise —
+                // aucune exception ne s'applique à ce vol.
+                let planFlight = takeOff OrganizeRequested organizing
+                let planButtons = renderedButtons (fst planFlight)
+
+                Expect.isFalse (planButtons |> List.exists snd) "toutes les actions sont grisées pendant le vol du plan, ouverture comprise"
+
+                // Vol d'une réanalyse demandée (F5) : l'exception 2 laisse
+                // l'ouverture de dossier active, elle seule.
+                let rescanFlight = takeOff RescanRequested organizing
+                let rescanButtons = renderedButtons (fst rescanFlight)
+
+                Expect.isTrue
+                    (rescanButtons |> List.exists (fun (label, enabled) -> label = "Ouvrir un autre dossier…" && enabled))
+                    "l'ouverture de dossier reste active pendant la réanalyse demandée (exception 2)"
+
+                Expect.equal (rescanButtons |> List.filter snd |> List.map fst) [ "Ouvrir un autre dossier…" ] "seule l'ouverture de dossier reste active pendant la réanalyse demandée"
 
                 // Vol de la réanalyse post-rangement (vue tri) : l'exception 2
                 // laisse l'ouverture de dossier active, elle seule.
@@ -1277,6 +1556,18 @@ let scenarioTests =
                 // comprise ; puis santé du grisage : une fois atterri, les
                 // actions reviennent.
                 withPhotos (fun photos ->
+                    // Vol d'une analyse demandée depuis le tri : l'exception 2
+                    // laisse l'ouverture de dossier active, elle seule.
+                    let triage = init () |> fst |> step (FolderSelected photos)
+                    let analysisFlight = takeOff (FolderSelected pellicule) triage
+                    let analysisButtons = renderedButtons (fst analysisFlight)
+
+                    Expect.isTrue
+                        (analysisButtons |> List.exists (fun (label, enabled) -> label = "Ouvrir un autre dossier…" && enabled))
+                        "l'ouverture de dossier reste active pendant l'analyse (exception 2)"
+
+                    Expect.equal (analysisButtons |> List.filter snd |> List.map fst) [ "Ouvrir un autre dossier…" ] "seule l'ouverture de dossier reste active pendant l'analyse"
+
                     let deleteFlight =
                         init ()
                         |> fst

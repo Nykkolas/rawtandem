@@ -411,23 +411,25 @@ let stateTests =
                 }
 
                 test "an organize plan from a previous folder does not open a confirmation" {
-                    // Le plan de A arrive après le changement de dossier : aucune
-                    // question ne s'ouvre — elle porterait sur des fichiers que
-                    // l'utilisateur ne regarde plus.
+                    // RC-06 : changer de dossier pendant un vol de plan est
+                    // bloqué — le parcours UI d'origine est impossible par
+                    // règle. L'invariant machine reste : un plan d'un dossier
+                    // quitté n'ouvre jamais de question — vérifié depuis un
+                    // état construit à la main (B affiché, plan de A en retard).
                     let state =
-                        (organizing' () |> update' OrganizeRequested) // préparation du plan de A en arrière-plan
-                        |> update' (FolderSelected otherFolderPath) // demande 2 : dossier B
-                        |> update' (FolderScanned(2, otherFolderPath, scanOfFolderB))
-                        |> update' (OrganizePlanned(fixtureFolderPath, planFixture)) // le plan de A arrive
+                        folderBDisplayed ()
+                        |> update' (OrganizePlanned(fixtureFolderPath, planFixture)) // le plan de A arrive en retard
 
                     Expect.equal state.Screen (Working Organizing) "aucune confirmation pour un plan d'un autre dossier"
                 }
 
                 test "a plan preparation failure from a previous folder is announced in the status only" {
+                    // RC-06 : idem — le changement de dossier pendant le vol
+                    // du plan est bloqué ; l'invariant machine (échec de A
+                    // annoncé au bandeau, écran et scan de B intacts) est
+                    // vérifié depuis B affiché.
                     let state =
-                        (organizing' () |> update' OrganizeRequested) // préparation du plan de A en arrière-plan
-                        |> update' (FolderSelected otherFolderPath) // demande 2 : dossier B
-                        |> update' (FolderScanned(2, otherFolderPath, scanOfFolderB))
+                        folderBDisplayed ()
                         |> update' (OrganizePlanningFailed(fixtureFolderPath, "acces refuse")) // A échoue en retard
 
                     Expect.equal state.Screen (Working Organizing) "l'écran de B ne bouge pas"
