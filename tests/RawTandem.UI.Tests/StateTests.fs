@@ -133,6 +133,44 @@ let stateTests =
                     Expect.equal state.Screen (Working Organizing) "une anomalie garde l'écran d'organisation"
                 }
 
+                test "FolderScanned stays on the Organizing screen when the folder holds only lone orphan JPGs" {
+                    // Cas limite (bug reproduit dans l'application le
+                    // 2026-10-30) : un dossier de JPG sans RAW n'est pas
+                    // « déjà organisé » — les orphelins sont une anomalie à
+                    // signaler, et l'écran d'organisation est le seul endroit
+                    // où le signal vit. Jamais de saut vers un tri vide.
+                    let scan = { emptyScan with OrphanJpgs = [ "P1.JPG"; "P2.JPG" ] }
+                    let state = init' () |> update' (FolderSelected fixtureFolderPath) |> update' (FolderScanned(1, fixtureFolderPath, scan))
+
+                    Expect.equal
+                        state.Screen
+                        (Working Organizing)
+                        "l'écran d'organisation est affiché — pas de saut vers un tri vide"
+
+                    Expect.stringContains
+                        state.Status
+                        "Aucun couple JPG+RAW trouvé"
+                        "le statut annonce le cas, il ne prétend pas que le dossier est déjà organisé"
+                }
+
+                test "FolderScanned stays on the Organizing screen when an organized folder holds a lone orphan JPG" {
+                    // Même classe de bug : le JPG orphelin à la racine est
+                    // une anomalie — elle garde l'écran d'organisation même
+                    // sur un dossier par ailleurs organisé (sinon le signal
+                    // n'est visible nulle part : le panneau ne vit que là).
+                    let scan =
+                        { emptyScan with
+                            OrganizedTandems = [ tandem "P1" ]
+                            OrphanJpgs = [ "P5.JPG" ] }
+
+                    let state = init' () |> update' (FolderSelected fixtureFolderPath) |> update' (FolderScanned(1, fixtureFolderPath, scan))
+
+                    Expect.equal
+                        state.Screen
+                        (Working Organizing)
+                        "le signal orphelin garde l'écran d'organisation (pas de tri direct)"
+                }
+
                 test "FolderScanned reports a RAW folder anomaly" {
                     let scan = { emptyScan with RawFolderIssue = Some RawFolderIsFile }
                     let state = init' () |> update' (FolderSelected fixtureFolderPath) |> update' (FolderScanned(1, fixtureFolderPath, scan))
@@ -989,8 +1027,15 @@ let stateTests =
                 }
 
                 test "currentJpgFileName is None when no tandem is triable" {
-                    let scan = { emptyScan with OrphanJpgs = [ "PX.JPG" ] }
-                    let state = init' () |> update' (FolderSelected fixtureFolderPath) |> update' (FolderScanned(1, fixtureFolderPath, scan))
+                    // Un dossier vide (aucun couple, aucun orphelin) : tri
+                    // direct sans photo à trier — la vue ne montre rien.
+                    // Le cas « orphelins JPG seuls » reste désormais à
+                    // l'écran d'organisation, signalé (cf. « FolderScanned
+                    // stays on the Organizing screen … », bug du 2026-10-30).
+                    let state =
+                        init' ()
+                        |> update' (FolderSelected fixtureFolderPath)
+                        |> update' (FolderScanned(1, fixtureFolderPath, emptyScan))
 
                     Expect.equal state.Screen (Working Triaging) "tri direct : rien à remettre en ordre"
                     Expect.isNone (currentJpgFileName state) "aucune photo courante"

@@ -103,6 +103,26 @@ let internal withPelliculeAProblemes (run: string -> unit) =
     finally
         Directory.Delete(folder, true)
 
+/// Préconditions du cas limite « orphelins JPG seuls » (reproduit dans
+/// l'application le 2026-10-30) : dossier « Pellicule » avec 2 JPG sans RAW
+/// à la racine — aucun couple nulle part, aucun sous-répertoire RAW.
+/// Fichiers vides créés par le test.
+let internal withPelliculeOrphelinsJpgSeuls (run: string -> unit) =
+    let folder =
+        Path.Combine(Path.GetTempPath(), sprintf "rawtandem-scenario-Pellicule-orphelins-%s" (Guid.NewGuid().ToString("N")))
+
+    if Directory.Exists folder then Directory.Delete(folder, true)
+
+    Directory.CreateDirectory folder |> ignore
+
+    for stem in [ "P1"; "P2" ] do
+        File.WriteAllText(Path.Combine(folder, stem + ".JPG"), "")
+
+    try
+        run folder
+    finally
+        Directory.Delete(folder, true)
+
 /// Indique si le filesystem du dossier temporaire distingue la casse des
 /// noms. Sonde de capacité réelle, pas test d'OS (règle AGENTS/ERREURS-
 /// GENERIC) — même sonde que `RawTandem.Core.Tests/TestHelpers.fs`,

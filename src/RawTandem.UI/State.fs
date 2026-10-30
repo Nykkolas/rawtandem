@@ -551,6 +551,13 @@ let private hasNothingToFix (scan: FolderScan) =
     && List.isEmpty scan.CrossedTandems
     && List.isEmpty scan.InvertedTandems
     && List.isEmpty scan.OrphanRawsToOrganize
+    // JPG orphelins à la racine : anomalie à signaler (le panneau « À
+    // corriger vous-même » vit sur l'écran d'organisation, seul endroit
+    // où le signal existe) — un dossier d'orphelins seuls n'est pas
+    // « déjà organisé », jamais de saut vers un tri vide (bug reproduit
+    // le 2026-10-30 : la catégorie existait depuis l'option A sans que ce
+    // prédicat, écrit deux jours avant, ne la compte).
+    && List.isEmpty scan.OrphanJpgs
     && List.isEmpty scan.OrphanJpgsInRaw
     && duplicates = 0
     && List.isEmpty scan.CaseCollisions
@@ -567,7 +574,11 @@ let private scanStatus (scan: FolderScan) =
         | None -> None
 
     let baseStatus =
-        if hasNothingToFix scan then
+        // Aucun couple nulle part (orphelins seuls, dossier vide, fichiers
+        // non photo) : le dire, plutôt que de prétendre « déjà organisé ».
+        if List.isEmpty scan.TandemsToOrganize && List.isEmpty scan.OrganizedTandems then
+            sprintf "%sAucun couple JPG+RAW trouvé." SuccessStatusPrefix
+        elif hasNothingToFix scan then
             sprintf
                 "%sDossier déjà organisé : %d tandems, rien à remettre en ordre."
                 SuccessStatusPrefix

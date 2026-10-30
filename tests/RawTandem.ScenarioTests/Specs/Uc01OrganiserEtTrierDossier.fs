@@ -25,11 +25,12 @@ open Harness.Rendering
 
 /// UC organiser-et-trier-dossier — docs/usecases/uc-01-organiser-et-trier-dossier.md.
 /// 
-/// Coverage : instancié — le scénario primaire (étapes 1 à 13) et les extensions
+/// Coverage : instancié — le scénario primaire (étapes 1 à 13), les extensions
 /// 2a (problèmes d'organisation) et 2b (dossier « raw » mal cassé, test ignoré
 /// sur un filesystem insensible à la casse pour raison erronée jamais silencieuse)
-/// y sont rejoués : vrais fichiers temporaires, vraie corbeille OS, vraies
-/// commandes Elmish en cascade.
+/// et le cas limite « orphelins JPG seuls » (même écoulement que 2a : signal,
+/// correction manuelle, réanalyse, reprise du primaire) y sont rejoués : vrais
+/// fichiers temporaires, vraie corbeille OS, vraies commandes Elmish en cascade.
 /// 
 /// Non couvert (headless) : le sélecteur natif de dossier (dialogue OS) et le
 /// branchement touche → message (KeyDown vit dans la vue).
@@ -258,4 +259,77 @@ let tests =
                         [ yield! Directory.EnumerateFiles(pellicule)
                           yield! Directory.EnumerateFiles(rawDir) ]
                     Expect.equal present.Length 3 "aucun fichier perdu ni écrasé"))
+
+        /// Cas limite « orphelins JPG seuls » (signalé au TODO, reproduit
+        /// dans l'application le 2026-10-30) : un dossier contenant
+        /// uniquement des JPG sans RAW. Même écoulement que 2a —
+        /// l'application liste le problème à l'écran d'organisation (le
+        /// seul endroit où le signal vit : jamais un saut vers un tri
+        /// vide), l'utilisateur corrige à la main dans l'explorateur,
+        /// réanalyse, et le scénario principal reprend.
+        test "UC organiser-et-trier-dossier : lone orphan JPGs are signaled at the organization screen and the primary resumes once paired" {
+            withPelliculeOrphelinsJpgSeuls (fun pellicule ->
+                let rawDir = Path.Combine(pellicule, RawSubfolderName)
+
+                // Ouverture : aucun couple nulle part — l'application reste
+                // à l'écran d'organisation et signale les orphelins.
+                let s1 = init () |> fst |> step (FolderSelected pellicule)
+
+                Expect.equal
+                    s1.Screen
+                    (Working Organizing)
+                    "l'écran d'organisation est affiché — pas de saut vers un tri vide"
+
+                Expect.equal s1.Scan.OrphanJpgs.Length 2 "les 2 JPG orphelins sont détectés"
+
+                Expect.equal s1.Scan.TandemsToOrganize.Length 0 "aucun couple à organiser"
+
+                Expect.stringContains
+                    s1.Status
+                    "Aucun couple JPG+RAW trouvé"
+                    "le statut annonce le cas — il ne prétend pas que le dossier est déjà organisé"
+
+                // Correction manuelle dans l'explorateur : l'utilisateur
+                // apparie (les RW2 manquants rejoignent les JPG).
+                for stem in [ "P1"; "P2" ] do
+                    File.WriteAllText(Path.Combine(pellicule, stem + ".RW2"), "")
+
+                // Réanalyse : l'interface se met à jour — plus d'orphelins,
+                // 2 couples à organiser.
+                let s2 = s1 |> step RescanRequested
+
+                Expect.equal s2.Scan.OrphanJpgs.Length 0 "plus aucun orphelin"
+
+                Expect.equal s2.Scan.TandemsToOrganize.Length 2 "2 couples à organiser (P1, P2)"
+
+                // Le scénario principal reprend — organisation (vrais
+                // déplacements sur le disque).
+                let s3 = s2 |> step OrganizeRequested
+
+                Expect.equal
+                    s3.Screen
+                    (Confirming(Organizing, OrganizeFolder 2))
+                    "2 RW2 appariés annoncés"
+
+                let s4 = s3 |> step OrganizeConfirmed
+
+                Expect.equal s4.Screen (Working Triaging) "passage automatique au tri après l'organisation"
+
+                // Le rangement a créé « RAW/ » et déplacé les RW2 ; le rescan
+                // en cascade voit les 2 couples organisés.
+                Expect.equal s4.Scan.TandemsToOrganize.Length 0 "plus rien à organiser"
+
+                Expect.equal s4.Scan.OrganizedTandems.Length 2 "les 2 couples sont organisés"
+
+                Expect.isTrue (Directory.Exists rawDir) "le dossier « RAW » est créé"
+
+                for stem in [ "P1"; "P2" ] do
+                    Expect.isTrue
+                        (File.Exists(Path.Combine(pellicule, stem + ".JPG")))
+                        (sprintf "%s.JPG reste à la racine" stem)
+
+                    Expect.isTrue
+                        (File.Exists(Path.Combine(rawDir, stem + ".RW2")))
+                        (sprintf "%s.RW2 rangé dans « RAW »" stem))
+        }
     ]
