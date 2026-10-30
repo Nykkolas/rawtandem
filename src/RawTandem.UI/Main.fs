@@ -1,6 +1,7 @@
 module Main
 
 open System
+open System.Reflection
 open Elmish
 open Avalonia
 open Avalonia.Controls
@@ -201,29 +202,58 @@ let private fullscreenPhotoView (state: State) (dispatch: Msg -> unit) : Types.I
         )
     ]
 
+/// Version de l'application, estampillée à la compilation : le défaut du
+/// fsproj (0.0.0-dev en local), écrasé par le workflow de release à chaque
+/// tag (-p:Version=x.y.z dans les binaires publiés). Affichée sur l'écran
+/// d'accueil — information de support, discrète.
+let private appVersion =
+    match
+        Assembly
+            .GetExecutingAssembly()
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+    with
+    | null -> "?"
+    | attr -> attr.InformationalVersion
+
 let private homeView (dispatch: Msg -> unit) =
-    StackPanel.create [
-        StackPanel.horizontalAlignment HorizontalAlignment.Center
-        StackPanel.verticalAlignment VerticalAlignment.Center
-        StackPanel.spacing 16.0
-        StackPanel.children [
+    DockPanel.create [
+        DockPanel.children [
+            // Pied discret : la version, information de support (petit
+            // corps, couleur secondaire — même langage que le compteur
+            // du tri). Dockée en bas du DockPanel racine de la vue.
             TextBlock.create [
-                TextBlock.text "RawTandem"
-                TextBlock.fontSize 32.0
-                TextBlock.fontWeight FontWeight.Bold
+                TextBlock.dock Dock.Bottom
+                TextBlock.text (sprintf "Version %s" appVersion)
+                TextBlock.fontSize 12.0
+                TextBlock.foreground Brushes.DimGray
                 TextBlock.horizontalAlignment HorizontalAlignment.Center
+                TextBlock.margin (Thickness(0.0, 0.0, 0.0, 12.0))
             ]
-            TextBlock.create [
-                TextBlock.text "Triez vos photos JPG+RAW, un tandem à la fois."
-                TextBlock.horizontalAlignment HorizontalAlignment.Center
-            ]
-            Button.create [
-                Button.content "Ouvrir un dossier"
-                Button.fontSize 16.0
-                Button.padding (Thickness(16.0, 8.0))
-                Button.horizontalAlignment HorizontalAlignment.Center
-                Button.onClick (fun args ->
-                    pickFolder args.Source dispatch |> Async.StartImmediate)
+
+            StackPanel.create [
+                StackPanel.horizontalAlignment HorizontalAlignment.Center
+                StackPanel.verticalAlignment VerticalAlignment.Center
+                StackPanel.spacing 16.0
+                StackPanel.children [
+                    TextBlock.create [
+                        TextBlock.text "RawTandem"
+                        TextBlock.fontSize 32.0
+                        TextBlock.fontWeight FontWeight.Bold
+                        TextBlock.horizontalAlignment HorizontalAlignment.Center
+                    ]
+                    TextBlock.create [
+                        TextBlock.text "Triez vos photos JPG+RAW, un tandem à la fois."
+                        TextBlock.horizontalAlignment HorizontalAlignment.Center
+                    ]
+                    Button.create [
+                        Button.content "Ouvrir un dossier"
+                        Button.fontSize 16.0
+                        Button.padding (Thickness(16.0, 8.0))
+                        Button.horizontalAlignment HorizontalAlignment.Center
+                        Button.onClick (fun args ->
+                            pickFolder args.Source dispatch |> Async.StartImmediate)
+                    ]
+                ]
             ]
         ]
     ]

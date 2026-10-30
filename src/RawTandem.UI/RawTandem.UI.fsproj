@@ -7,6 +7,11 @@
          un double-clic ouvrait une console noire à côté de la fenêtre
          (reproduit dans la recette Windows du 2026-10-30). -->
     <OutputType>WinExe</OutputType>
+    <!-- Version estampillée à la compilation : défaut des builds locaux
+         (affichée « Version 0.0.0-dev » sur l'accueil) ; le workflow de
+         release l'écrase par la version du tag (-p:Version=x.y.z) dans
+         les binaires publiés. -->
+    <Version>0.0.0-dev</Version>
     <UseAvalonia>true</UseAvalonia>
     <AvaloniaUseCompactAssembly>false</AvaloniaUseCompactAssembly>
     <!-- Icône de l'exe (Windows) ; la fenêtre charge Assets/icon.png au

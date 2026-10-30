@@ -10,7 +10,7 @@ l'audit ; l'avancement est tenu à jour ci-dessous.
 1. **Raccourcis `Entrée`/`Échap` du bandeau jaune** (point 6 ci-dessous) —
    **fait le 2026-10-30**.
 2. **Cas limite du répertoire sans photo triable** (point 3 ci-dessous) —
-   décision de comportement + scénario UC dédié.
+   décision de comportement + scénario UC dédié — **fait le 2026-10-30**.
 3. **Recette manuelle Windows réelle** (point 5 ci-dessous) — puis tag 1.0.
 
 Le reste est renvoyé aux versions suivant la 1.0 (points 8 complément, 9 à 15,
