@@ -13,6 +13,7 @@
     <Compile Include="Harness/Steps.fs" />
     <Compile Include="Harness/Fixtures.fs" />
     <Compile Include="Harness/Rendering.fs" />
+    <Compile Include="Harness/Keyboard.fs" />
     <Compile Include="Specs/Uc01OrganiserEtTrierDossier.fs" />
     <Compile Include="Specs/Uc02TrierDossierDejaOrganise.fs" />
     <Compile Include="Specs/Rc01InteractionsVuesDeTri.fs" />

@@ -177,6 +177,16 @@ let private isBandeauAction (msg: Msg) =
 /// dossier est le seul producteur sans garde d'écran (filet : le chemin
 /// utilisateur est fermé d'amont par RC-06, un message peut néanmoins
 /// arriver d'une file ou d'un autre front sans fenêtre).
+///
+/// Défense à deux couches (choix documenté le 2026-10-30, éprouvé au rouge
+/// par mutation) : cette garde centrale est le verrou temporel global
+/// (question affichée, opération en vol) à base de liste opt-in ; les
+/// gardes d'écran par message ci-dessous (`| Working _ | Confirming _ ->
+/// state, Cmd.none`) forment le filet opt-out — un message absent de la
+/// liste centrale (message nouveau oublié) reste un no-op par défaut.
+/// Chaque couche couvre l'angle mort de l'autre : casser une seule couche
+/// ne change rien au comportement, et un test de garde ne vire au rouge
+/// que si les deux cassent (le vérifier en mutation).
 let private isBlockedGesture (state: State) (msg: Msg) =
     match state.InFlight with
     | None -> isQuestionPending state && isUserGesture msg && not (isBandeauAction msg)

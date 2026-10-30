@@ -655,7 +655,10 @@ let private keyToMsg (key: Key) : Msg option =
 /// flèche (focus donné au premier contrôle focalisable, événement marqué
 /// géré) et le raccourci ne jouait qu'à partir de la deuxième pression
 /// (bug confirmé 2026-10-26).
-let private keyboardSubscriptions (window: Window) (_state: State) =
+/// Internal (pas private) : le harnais des scénarios (RawTandem.ScenarioTests)
+/// attache la VRAIE subscription à une vraie fenêtre headless — les tests de
+/// clavier couvrent le branchement réel, pas une copie.
+let internal keyboardSubscriptions (window: Window) (_state: State) =
     [
         ([ "keyboard-shortcuts" ],
          fun (dispatch: Msg -> unit) ->

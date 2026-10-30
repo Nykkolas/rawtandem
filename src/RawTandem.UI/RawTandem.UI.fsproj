@@ -31,6 +31,12 @@
     <Compile Include="Program.fs" />
   </ItemGroup>
 
+  <!-- Le harnais des scénarios attache la vraie subscription clavier
+       (Main.keyboardSubscriptions, internal) à une fenêtre headless. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="RawTandem.ScenarioTests" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\RawTandem.Core\RawTandem.Core.fsproj" />
   </ItemGroup>
