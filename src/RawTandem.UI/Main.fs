@@ -632,7 +632,7 @@ let view (state: State) (dispatch: Msg -> unit) =
 
 // ========== Clavier (subscription Elmish, règle RC-01) ==========
 
-/// Mapping touche → message de geste (RC-01, docs/usecases/regles-communes.md).
+/// Mapping touche → message de geste (RC-01, docs/usecases/rc-01-interactions-vues-de-tri.md).
 /// La vue traduit les touches, la garde d'écran vit dans `update` : tout
 /// producteur de messages (clavier, bouton, autre front-end) est couvert.
 /// Les touches non mappées (Tab, Entrée, Espace…) restent aux contrôles.

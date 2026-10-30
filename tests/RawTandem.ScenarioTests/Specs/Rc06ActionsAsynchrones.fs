@@ -1,4 +1,4 @@
-module Specs.RC06
+module Specs.Rc06ActionsAsynchrones
 
 open System
 open System.IO
@@ -23,7 +23,7 @@ open Harness.Steps
 open Harness.Fixtures
 open Harness.Rendering
 
-/// Règle RC-06 — docs/usecases/regles-communes.md.
+/// Règle RC-06 — docs/usecases/rc-06-actions-asynchrones.md.
 /// 
 /// Coverage : générique — pendant chaque opération (analyse, plan, rangement,
 /// réanalyses, suppression), les gestes ne passent pas ; les boutons sont

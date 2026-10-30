@@ -1,4 +1,4 @@
-module Specs.TrierDossierDejaOrganise
+module Specs.Uc02TrierDossierDejaOrganise
 
 open System
 open System.IO
@@ -23,7 +23,7 @@ open Harness.Steps
 open Harness.Fixtures
 open Harness.Rendering
 
-/// UC trier-dossier-deja-organise — docs/usecases/trier-dossier-deja-organise.md.
+/// UC trier-dossier-deja-organise — docs/usecases/uc-02-trier-dossier-deja-organise.md.
 /// 
 /// Coverage : instancié — dossier déjà organisé : tri affiché directement,
 /// navigation, suppression d'un tandem (vraie corbeille OS).

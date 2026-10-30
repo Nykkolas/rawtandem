@@ -1,4 +1,4 @@
-module Specs.RC01
+module Specs.Rc01InteractionsVuesDeTri
 
 open System
 open System.IO
@@ -23,7 +23,7 @@ open Harness.Steps
 open Harness.Fixtures
 open Harness.Rendering
 
-/// Règle RC-01 — docs/usecases/regles-communes.md.
+/// Règle RC-01 — docs/usecases/rc-01-interactions-vues-de-tri.md.
 /// 
 /// Coverage : générique — tests dédiés valables pour toute vue de tri :
 /// clavier (flèches, Home/End, Suppr), plein écran (F/F11/double-clic/Echap),
@@ -37,7 +37,7 @@ open Harness.Rendering
 let tests =
     testList "RC-01 : interactions dans les vues de tri" [
 
-        /// Scénario exécutable de docs/usecases/regles-communes.md, règle RC-01.
+        /// Scénario exécutable de docs/usecases/rc-01-interactions-vues-de-tri.md.
         /// Coverage générique : un seul test pour toutes les vues de tri.
         ///
         /// Le test ne joue que les gestes de l'utilisateur. Le mapping clavier
@@ -76,7 +76,7 @@ let tests =
                 Expect.equal sDel.Screen (Confirming(Triaging, DeleteTandem "P3")) "Suppr : la confirmation RC-02 s'affiche pour la photo courante")
         }
 
-        /// Scénario exécutable de docs/usecases/regles-communes.md, règle RC-01
+        /// Scénario exécutable de docs/usecases/rc-01-interactions-vues-de-tri.md
         /// (plein écran). Coverage générique, suite du test clavier ci-dessus.
         ///
         /// Le test ne joue que les gestes. F, F11, le double-clic et le bouton
@@ -127,7 +127,7 @@ let tests =
                 Expect.equal sNormalAgain.DisplayMode Normal "Echap : retour à l'affichage normal")
         }
 
-        /// Scénario exécutable de docs/usecases/regles-communes.md, règle RC-01 :
+        /// Scénario exécutable de docs/usecases/rc-01-interactions-vues-de-tri.md :
         /// en plein écran, la barre de statut n'apparaît que brièvement puis se
         /// cache « le reste du temps ». La machine programme l'effacement
         /// (commande temporisée → StatusHidden) : le pas de scénario exécute

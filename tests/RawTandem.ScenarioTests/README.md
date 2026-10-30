@@ -14,15 +14,15 @@ et se joue délibérément — validation d'une règle, d'un UC, recette.
 
 | Document (`docs/usecases/`) | Scénario (`Specs/`) |
 |---|---|
-| `organiser-et-trier-dossier.md` | `OrganiserEtTrierDossier.fs` (primaire + extensions 2a, 2b) |
-| `trier-dossier-deja-organise.md` | `TrierDossierDejaOrganise.fs` |
-| `regles-communes.md` → RC-01 | `RC01.fs` |
-| `regles-communes.md` → RC-04 | `RC04.fs` |
-| `regles-communes.md` → RC-05 | `RC05.fs` |
-| `regles-communes.md` → RC-06 | `RC06.fs` (sections dans l'ordre du vécu utilisateur) |
+| `uc-01-organiser-et-trier-dossier.md` | `Uc01OrganiserEtTrierDossier.fs` (primaire + extensions 2a, 2b) |
+| `uc-02-trier-dossier-deja-organise.md` | `Uc02TrierDossierDejaOrganise.fs` |
+| `rc-01-interactions-vues-de-tri.md` | `Rc01InteractionsVuesDeTri.fs` |
+| `rc-04-affichage-jpg-rotation-exif.md` | `Rc04AffichageJpgRotationExif.fs` |
+| `rc-05-bandeau-jaune-modal.md` | `Rc05BandeauJauneModal.fs` |
+| `rc-06-actions-asynchrones.md` | `Rc06ActionsAsynchrones.fs` (sections dans l'ordre du vécu utilisateur) |
 
 Chaque fichier commence par une **cartouche** : le document source, la
-couverture (générique/instancié, cf. `regles-communes.md`) et le **non couvert**
+couverture (générique/instancié, cf. `rc-00-regles-communes.md`) et le **non couvert**
 (sélecteur natif de dossier, branchement clavier — hors headless).
 
 `Main.fs` assemble les testLists dans l'ordre des documents (UC puis

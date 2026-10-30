@@ -67,7 +67,7 @@ let internal step (msg: Msg) (state: State) : State =
     let state', cmd = update msg state
     runCascade state' (runSubs cmd) 50
 
-// ========== RC-06 : pas « en vol » (docs/usecases/regles-communes.md) ==========
+// ========== RC-06 : pas « en vol » (docs/usecases/rc-06-actions-asynchrones.md) ==========
 //
 // `step` attend la fin de toutes les commandes : il ne peut jamais observer
 // un état « pendant » une opération asynchrone. RC-06 interdit à l'utilisateur

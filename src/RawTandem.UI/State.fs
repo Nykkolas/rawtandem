@@ -962,7 +962,7 @@ let private updateCore (msg: Msg) (state: State) : State * Cmd<Msg> =
             nextState, loadCurrentJpgCmd nextState
         | Working _ | Confirming _ -> state, Cmd.none
 
-    // RC-01 (docs/usecases/regles-communes.md) : Home → première photo,
+    // RC-01 (docs/usecases/rc-01-interactions-vues-de-tri.md) : Home → première photo,
     // End → dernière photo. Mêmes gardes et même rechargement que les
     // flèches : la garde est dans update, le mapping touche → message
     // dans la vue.
@@ -981,7 +981,7 @@ let private updateCore (msg: Msg) (state: State) : State * Cmd<Msg> =
             nextState, loadCurrentJpgCmd nextState
         | Working _ | Confirming _ -> state, Cmd.none
 
-    // RC-01 (docs/usecases/regles-communes.md) : F/F11/double-clic basculent
+    // RC-01 (docs/usecases/rc-01-interactions-vues-de-tri.md) : F/F11/double-clic basculent
     // le plein écran, Echap le quitte — jamais pendant qu'une confirmation est
     // présentée (l'écran Confirming prime : la question doit être tranchée
     // d'abord). Le mode d'affichage est orthogonal à l'écran : les autres
@@ -1158,7 +1158,7 @@ let private updateCore (msg: Msg) (state: State) : State * Cmd<Msg> =
             Cmd.none
         | Working _ | Confirming _ -> state, Cmd.none
 
-/// RC-01 (docs/usecases/regles-communes.md) : en plein écran, la barre de
+/// RC-01 (docs/usecases/rc-01-interactions-vues-de-tri.md) : en plein écran, la barre de
 /// statut n'apparaît que brièvement puis se cache « le reste du temps ».
 /// La machine programme l'effacement : dès qu'un statut apparaît (ou qu'on
 /// entre en plein écran avec un statut affiché), une commande temporisée

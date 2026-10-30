@@ -1,4 +1,4 @@
-module Specs.OrganiserEtTrierDossier
+module Specs.Uc01OrganiserEtTrierDossier
 
 open System
 open System.IO
@@ -23,7 +23,7 @@ open Harness.Steps
 open Harness.Fixtures
 open Harness.Rendering
 
-/// UC organiser-et-trier-dossier — docs/usecases/organiser-et-trier-dossier.md.
+/// UC organiser-et-trier-dossier — docs/usecases/uc-01-organiser-et-trier-dossier.md.
 /// 
 /// Coverage : instancié — le scénario primaire (étapes 1 à 13) et les extensions
 /// 2a (problèmes d'organisation) et 2b (dossier « raw » mal cassé, test ignoré
@@ -99,7 +99,7 @@ let tests =
                 Expect.equal present.Length 4 "P1 et P3 restent des deux côtés, seuls les fichiers de P2 sont partis")
         }
 
-        /// Scénario exécutable de docs/usecases/organiser-et-trier-dossier.md,
+        /// Scénario exécutable de docs/usecases/uc-01-organiser-et-trier-dossier.md,
         /// extension 2a. Un seul dossier « mélange » : le flux est prouvé
         /// (lister → corriger à la main → réanalyser → interface à jour →
         /// reprise du primaire), la matrice des catégories de problèmes reste
@@ -189,7 +189,7 @@ let tests =
                 Expect.equal present.Length 9 "aucun fichier perdu ni écrasé")
         }
 
-        /// Scénario exécutable de docs/usecases/organiser-et-trier-dossier.md,
+        /// Scénario exécutable de docs/usecases/uc-01-organiser-et-trier-dossier.md,
         /// extension 2b : le répertoire « raw » mal cassé bloque le rangement
         /// (refus gardé dans update, déjà testé en unitaire — le scénario ne
         /// peut pas cliquer un bouton grisé) ; correction manuelle, réanalyse,

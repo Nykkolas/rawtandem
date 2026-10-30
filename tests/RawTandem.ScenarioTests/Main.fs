@@ -22,9 +22,9 @@ let main args =
         args
         (testList
             "RawTandem.ScenarioTests"
-            [ OrganiserEtTrierDossier.tests
-              TrierDossierDejaOrganise.tests
-              RC01.tests
-              RC04.tests
-              RC05.tests
-              RC06.tests ])
+            [ Uc01OrganiserEtTrierDossier.tests
+              Uc02TrierDossierDejaOrganise.tests
+              Rc01InteractionsVuesDeTri.tests
+              Rc04AffichageJpgRotationExif.tests
+              Rc05BandeauJauneModal.tests
+              Rc06ActionsAsynchrones.tests ])

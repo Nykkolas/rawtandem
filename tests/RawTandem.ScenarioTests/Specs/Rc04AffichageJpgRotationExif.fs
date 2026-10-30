@@ -1,4 +1,4 @@
-module Specs.RC04
+module Specs.Rc04AffichageJpgRotationExif
 
 open System
 open System.IO
@@ -23,7 +23,7 @@ open Harness.Steps
 open Harness.Fixtures
 open Harness.Rendering
 
-/// Règle RC-04 — docs/usecases/regles-communes.md.
+/// Règle RC-04 — docs/usecases/rc-04-affichage-jpg-rotation-exif.md.
 /// 
 /// Coverage : générique — deux niveaux d'observation, l'un ne pouvant pas mentir
 /// pour l'autre : la vraie vue de tri est rendue et vérifiée pixel par pixel (ce
@@ -37,7 +37,7 @@ open Harness.Rendering
 let tests =
     testList "RC-04 : affichage des JPG orienté selon la rotation EXIF" [
 
-        /// Scénario exécutable de docs/usecases/regles-communes.md, règle RC-04 :
+        /// Scénario exécutable de docs/usecases/rc-04-affichage-jpg-rotation-exif.md :
         /// le JPG affiché est tourné selon son tag EXIF Orientation. Coverage
         /// générique : un seul test pour toutes les vues affichant une photo.
         ///

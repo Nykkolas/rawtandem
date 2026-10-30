@@ -1,4 +1,4 @@
-module Specs.RC05
+module Specs.Rc05BandeauJauneModal
 
 open System
 open System.IO
@@ -23,7 +23,7 @@ open Harness.Steps
 open Harness.Fixtures
 open Harness.Rendering
 
-/// Règle RC-05 — docs/usecases/regles-communes.md.
+/// Règle RC-05 — docs/usecases/rc-05-bandeau-jaune-modal.md.
 /// 
 /// Coverage : générique — les boutons grisés pendant une question sont vérifiés
 /// sur la vraie vue rendue (écran d'organisation, tri, retour après réponse) ;
