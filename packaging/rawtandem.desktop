@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=RawTandem
+Comment=Organise et trie les couples JPG+RAW d'un dossier photo
+Exec=RawTandem.UI
+Icon=rawtandem
+Terminal=false
+Categories=Graphics;Photography;Utility;

@@ -1,0 +1,186 @@
+# Workflow de release : au push d'un tag v*, rejoue la suite de tests
+# complète puis construit les binaires et ouvre une GitHub Release en
+# BROUILLON (relecture utilisateur avant publication — AGENTS.md
+# § « Crée une version x.y.z »).
+#
+# Binaires livrés :
+#   - RawTandem-x.y.z-linux-x64.tar.gz   (binaire self-contained single-file)
+#   - RawTandem-x.y.z-x86_64.AppImage     (packagé par linuxdeploy)
+#   - RawTandem-x.y.z-win-x64.zip         (binaire self-contained single-file)
+#   - RawTandem-x.y.z-setup.exe           (installeur Inno Setup, packaging/RawTandem.iss)
+#
+# La version vient du tag (vx.y.z) : rien à committer avant de tagger.
+# Un suffixe -alpha/-beta/-rc/-pre marque la release comme préversion.
+# Les formats sont des jobs isolés : en ajouter (deb, Flatpak…) = un job
+# de plus, sans toucher au reste.
+
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: Tests before release (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      # gio (corbeille OS freedesktop) : les tests de suppression l'appellent
+      # réellement. Linux uniquement (RC-03 : shell32 sous Windows).
+      - name: Install gio for OS trash tests
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libglib2.0-bin
+
+      - name: Run tests
+        run: dotnet test
+
+  package-linux:
+    name: Package Linux
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      # DebugType=none : pas de .pdb dans les paquets livrés.
+      - name: Publish single-file binary
+        run: >-
+          dotnet publish src/RawTandem.UI
+          -c Release -r linux-x64 --self-contained
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:DebugType=none
+          -p:Version="${GITHUB_REF_NAME#v}"
+          -o publish/linux
+
+      - name: Compress portable binary
+        run: |
+          mkdir -p dist
+          tar -czf "dist/RawTandem-${GITHUB_REF_NAME#v}-linux-x64.tar.gz" \
+            -C publish/linux RawTandem.UI
+
+      # AppImage via linuxdeploy : AppDir manuel (binaire, .desktop, icône
+      # hicolor 256x256) puis linuxdeploy génère le AppImage final.
+      # --appimage-extract-and-run : pas de dépendance libfuse2 sur le runner.
+      - name: Build AppImage
+        run: |
+          appdir=AppDir
+          mkdir -p "$appdir/usr/bin" \
+                   "$appdir/usr/share/applications" \
+                   "$appdir/usr/share/icons/hicolor/256x256/apps"
+          cp publish/linux/RawTandem.UI "$appdir/usr/bin/"
+          cp packaging/rawtandem.desktop "$appdir/usr/share/applications/"
+          cp src/RawTandem.UI/Assets/icon.png \
+             "$appdir/usr/share/icons/hicolor/256x256/apps/rawtandem.png"
+          wget -qO linuxdeploy.AppImage \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy.AppImage
+          OUTPUT="dist/RawTandem-${GITHUB_REF_NAME#v}-x86_64.AppImage" \
+            ./linuxdeploy.AppImage --appimage-extract-and-run \
+            --appdir "$appdir" --output appimage
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-binaries
+          path: dist/*
+          if-no-files-found: error
+
+  package-windows:
+    name: Package Windows
+    needs: test
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress
+
+      - name: Publish single-file binary
+        run: >-
+          dotnet publish src/RawTandem.UI
+          -c Release -r win-x64 --self-contained
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:DebugType=none
+          -p:Version="$($env:GITHUB_REF_NAME.Substring(1))"
+          -o publish/windows
+        shell: pwsh
+
+      - name: Compress portable binary
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path publish/windows/* -DestinationPath "dist/RawTandem-$($env:GITHUB_REF_NAME.Substring(1))-win-x64.zip"
+        shell: pwsh
+
+      - name: Build installer with Inno Setup
+        run: iscc /DAppVersion=$($env:GITHUB_REF_NAME.Substring(1)) packaging\RawTandem.iss
+        shell: pwsh
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-binaries
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Create draft GitHub Release
+    needs: [package-linux, package-windows]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      # Suffixe de préversion -> release marquée "Pre-release".
+      - name: Detect prerelease
+        id: meta
+        run: |
+          if [[ "$GITHUB_REF_NAME" =~ -(alpha|beta|rc|pre)[0-9]*$ ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Brouillon + notes générées : la release n'est visible que du
+      # propriétaire ; publication = un clic après relecture.
+      - name: Create draft release with binaries
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          prerelease: ${{ steps.meta.outputs.prerelease }}
+          files: dist/*

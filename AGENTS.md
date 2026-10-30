@@ -17,8 +17,12 @@
 
 ### "Crée une version x.y.z"
 - Équivaut à : `git tag vx.y.z` + `git push origin vx.y.z` (autorisation explicite incluse).
-- Le workflow CI exécute les tests puis publie les binaires en GitHub Release (à mettre en place ; voir `docs/TODO.md`).
-- Après le push du tag, vérifier le run et la Release obtenue, et rapporter le résultat.
+- Le workflow `.github/workflows/release.yml` rejoue la suite de tests (Linux + Windows), puis construit
+  les binaires — `tar.gz` + AppImage (Linux), `zip` + installeur Inno Setup (Windows) — et ouvre une
+  Release en **brouillon** avec notes générées automatiquement ; la publication finale (un clic dans
+  l'onglet Releases) reste à l'utilisateur après relecture. Un suffixe `-alpha`/`-beta`/`-rc`/`-pre`
+  dans le tag marque la Release comme préversion.
+- Après le push du tag, vérifier le run et le brouillon de Release, et rapporter le résultat.
 
 ### Workflow "la spec est le UC" (adopté le 2026-10-26, éprouvé sur organiser-et-trier-dossier)
 - La boucle complète (UC → questionnement forme/fond sans plume → test E2E relu → « go » →

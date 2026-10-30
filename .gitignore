@@ -1,7 +1,9 @@
 bin/
 obj/
 dist/
+publish/
 .vs/
+.vscode/
 *.user
 
 TestResults/
