@@ -17,6 +17,14 @@
 
 ### "Crée une version x.y.z"
 - Équivaut à : `git tag vx.y.z` + `git push origin vx.y.z` (autorisation explicite incluse).
+- **Description avant le tag** : proposer à l'utilisateur un court texte de description de
+  la version (langage utilisateur, ce qu'elle apporte) **avant de créer le tag** ; le texte
+  validé est injecté dans le brouillon de Release par `gh release edit` (changelog auto conservé
+  en dessous). Sans validation explicite du texte, pas de tag.
+- **La publication est toujours manuelle** : quelle que soit la formulation de la demande
+  (« crée une version », « publie », « fais la 1.2.3 »…), le workflow s'arrête au brouillon —
+  l'agent ne publie **jamais** la Release ; c'est l'utilisateur qui clique « Publish »
+  après relecture.
 - Le workflow `.github/workflows/release.yml` rejoue la suite de tests (Linux + Windows), puis construit
   les binaires — `tar.gz` + AppImage (Linux), `zip` + installeur Inno Setup (Windows) — et ouvre une
   Release en **brouillon** avec notes générées automatiquement ; la publication finale (un clic dans
@@ -28,7 +36,9 @@
 - La boucle complète (UC → questionnement forme/fond sans plume → test E2E relu → « go » →
   implémentation TDD → vérification utilisateur → commit) vit dans `docs/SPEC-UC.md`
   (agents-shared) : la lire avant de démarrer une fonctionnalité ou une correction.
-- Spécifique au projet : UC dans `docs/usecases/` (un fichier par UC) ; scénarios exécutables
+- Spécifique au projet : UC dans `docs/usecases/` (un fichier par UC, numéroté `uc-XX-slug.md`,
+  `XX` dans l'ordre d'adoption) ; règles communes dans un fichier par règle (`rc-XX-slug.md`,
+  `rc-00-regles-communes.md` restant l'index) ; scénarios exécutables
   dans `tests/RawTandem.ScenarioTests/` (un fichier par UC/règle sous `Specs/`, miroir du nom du
   document ; harnais sous `Harness/`) avec l'interpréteur `step` (le test ne joue
   que les gestes de l'utilisateur, les commandes Elmish sont exécutées réellement en cascade,
