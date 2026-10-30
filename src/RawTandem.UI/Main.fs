@@ -632,10 +632,13 @@ let view (state: State) (dispatch: Msg -> unit) =
 
 // ========== Clavier (subscription Elmish, règle RC-01) ==========
 
-/// Mapping touche → message de geste (RC-01, docs/usecases/rc-01-interactions-vues-de-tri.md).
+/// Mapping touche → message de geste (RC-01, docs/usecases/rc-01-interactions-vues-de-tri.md
+/// ; Échap/Entrée : RC-05, docs/usecases/rc-05-bandeau-jaune-modal.md).
 /// La vue traduit les touches, la garde d'écran vit dans `update` : tout
 /// producteur de messages (clavier, bouton, autre front-end) est couvert.
-/// Les touches non mappées (Tab, Entrée, Espace…) restent aux contrôles.
+/// Les touches non mappées (Tab, Espace…) restent aux contrôles.
+/// Entrée n'y figure pas : son traitement dépend du focus (bouton du bandeau
+/// prioritaire), géré dans la subscription.
 let private keyToMsg (key: Key) : Msg option =
     match key with
     | Key.Left -> Some PreviousClicked
@@ -646,8 +649,22 @@ let private keyToMsg (key: Key) : Msg option =
     | Key.F5 -> Some RescanRequested
     | Key.F
     | Key.F11 -> Some FullscreenRequested
-    | Key.Escape -> Some FullscreenExitRequested
+    | Key.Escape -> Some EscapePressed
     | _ -> None
+
+/// RC-05 : le bouton actif actuellement focusé, s'il y en a un. Pendant une
+/// question, seuls les boutons du bandeau peuvent être à la fois actifs et
+/// focusés (tout le reste est grisé) — un bouton grisé focusé ne compte
+/// pas, l'acceptation par Entrée doit rester possible.
+let private focusedEnabledButton (window: Window) : Button option =
+    let fm = window.FocusManager
+
+    if isNull (box fm) then
+        None
+    else
+        match box (fm.GetFocusedElement()) with
+        | :? Button as b when b.IsEnabled -> Some b
+        | _ -> None
 
 /// Subscription clavier. Le gestionnaire est posé en **tunnel** sur la
 /// fenêtre pour voir les touches AVANT la navigation de focus d'Avalonia :
@@ -664,11 +681,26 @@ let internal keyboardSubscriptions (window: Window) (_state: State) =
          fun (dispatch: Msg -> unit) ->
              let handler =
                  EventHandler<KeyEventArgs>(fun _ args ->
-                     match keyToMsg args.Key with
-                     | Some msg ->
+                     match args.Key with
+                     // RC-05 : Entrée tranche la question affichée. Un bouton
+                     // actif a le focus (pendant une question : un bouton du
+                     // bandeau, seuls boutons actifs — tout le reste est grisé)
+                     // : c'est LUI qu'Entrée active (convention Windows), par
+                     // son propre clic — pas de double tranchage. Sans bouton
+                     // focusé, le raccourci accepte ; hors question, la garde
+                     // machine rend QuestionAccepted inoffensif (no-op).
+                     | Key.Enter ->
                          args.Handled <- true
-                         dispatch msg
-                     | None -> ())
+
+                         match focusedEnabledButton window with
+                         | Some button -> button.RaiseEvent(RoutedEventArgs(Button.ClickEvent))
+                         | None -> dispatch QuestionAccepted
+                     | key ->
+                         match keyToMsg key with
+                         | Some msg ->
+                             args.Handled <- true
+                             dispatch msg
+                         | None -> ())
 
              window.AddHandler(InputElement.KeyDownEvent, handler, RoutingStrategies.Tunnel)
 

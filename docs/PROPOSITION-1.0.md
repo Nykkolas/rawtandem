@@ -8,7 +8,7 @@ l'audit ; l'avancement est tenu à jour ci-dessous.
 ## Feuille de route vers 1.0 (arbitrage du 2026-10-30, dans l'ordre)
 
 1. **Raccourcis `Entrée`/`Échap` du bandeau jaune** (point 6 ci-dessous) —
-   proposition de règle RC-05 et liste de tests en relecture.
+   **fait le 2026-10-30**.
 2. **Cas limite du répertoire sans photo triable** (point 3 ci-dessous) —
    décision de comportement + scénario UC dédié.
 3. **Recette manuelle Windows réelle** (point 5 ci-dessous) — puis tag 1.0.
@@ -56,12 +56,14 @@ OS, courses traitées avec tests de non-régression nommés).
 
 ## P1 — souhaitables avant 1.0
 
-6. **[PRIORITÉ 1, en cours]** Raccourcis `Entrée`/`Échap` pour trancher la
+6. **[FAIT — 2026-10-30]** Raccourcis `Entrée`/`Échap` pour trancher la
    question affichée (le clavier peut ouvrir une confirmation avec `Suppr` mais
-   pas la trancher — entrée TODO existante, audit itération 4). Proposition
-   déposée le 2026-10-30 : extension de RC-05 (`Entrée` accepte, `Échap`
-   refuse, priorité question > sortie de plein écran, no-op hors question) +
-   6 tests E2E en relecture.
+   pas la trancher — entrée TODO existante, audit itération 4). Fait via
+   l'extension de RC-05 : `Échap` refuse, `Entrée` accepte (bouton du bandeau
+   focusé prioritaire — convention Windows), plein écran conservé pendant la
+   question, no-op hors question ; 8 tests E2E en vraies touches + migration
+   des tests spec v1→v2 ; détection au rouge par mutation ; couverture
+   mesurée (2026-10-30 (2) : 84,3 % lignes, Main 69,6 %).
 7. **[ARBITRÉ — hors 1.0]** Décision « déplacement des tandems » : seule
    promesse de VISION non tenue (visualiser ✔, supprimer ✔, déplacer ✘) —
    renvoyé aux versions suivant la 1.0 (arbitrage du 2026-10-30) ; VISION et

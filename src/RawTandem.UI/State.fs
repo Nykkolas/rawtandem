@@ -94,7 +94,8 @@ type Msg =
     | FirstPhotoRequested
     | LastPhotoRequested
     | FullscreenRequested
-    | FullscreenExitRequested
+    | EscapePressed
+    | QuestionAccepted
     | StatusHidden
     | DeleteTandemRequested
     | DeleteTandemConfirmed
@@ -159,15 +160,17 @@ let private isUserGesture (msg: Msg) =
     | OrganizeRequested | OrganizeConfirmed | OrganizeCancelled
     | StartTriagingClicked
     | PreviousClicked | NextClicked | FirstPhotoRequested | LastPhotoRequested
-    | FullscreenRequested | FullscreenExitRequested
+    | FullscreenRequested | EscapePressed | QuestionAccepted
     | DeleteTandemRequested | DeleteTandemConfirmed | DeleteTandemCancelled -> true
 
 /// RC-05 : les actions du bandeau jaune ne sont jamais bloquées — ce sont
-/// elles qui tranchent la question affichée.
+/// elles qui tranchent la question affichée. Échap et Entrée sont leurs
+/// équivalents clavier : même exemption.
 let private isBandeauAction (msg: Msg) =
     match msg with
     | OrganizeConfirmed | OrganizeCancelled
-    | DeleteTandemConfirmed | DeleteTandemCancelled -> true
+    | DeleteTandemConfirmed | DeleteTandemCancelled
+    | EscapePressed | QuestionAccepted -> true
     | _ -> false
 
 /// RC-06 : un geste utilisateur est bloqué pendant une opération en vol —
@@ -1007,11 +1010,19 @@ let private updateCore (msg: Msg) (state: State) : State * Cmd<Msg> =
             { state with DisplayMode = nextMode }, Cmd.none
         | Working _ | Confirming _ -> state, Cmd.none
 
-    | FullscreenExitRequested ->
+    // RC-05 : pendant une question, c'est `update` (l'enveloppe) qui route
+    // Échap vers le refus de l'action en attente — ce bras ne joue que sans
+    // question : le rôle RC-01 d'Échap (sortie du plein écran).
+    | EscapePressed ->
         match state.Screen with
         | Working Triaging when state.DisplayMode = Fullscreen ->
             { state with DisplayMode = Normal }, Cmd.none
         | Working _ | Confirming _ -> state, Cmd.none
+
+    // RC-05 : sans question (routage de l'enveloppe), Entrée n'a aucune
+    // action en attente à accepter — no-op, la garde couvre tous les
+    // producteurs de messages.
+    | QuestionAccepted -> state, Cmd.none
 
     // RC-01 : en plein écran, la barre de statut n'apparaît que brièvement
     // (~3 s, minuteur posé par la vue) puis se cache « le reste du temps ».
@@ -1192,23 +1203,42 @@ let private autoHideStatusCmd : Cmd<Msg> =
 /// la logique des messages vit dans updateCore, l'éphémérisation du statut
 /// en plein écran est l'unique préoccupation de l'enveloppe — un seul
 /// endroit, tous les messages couverts.
-let update (msg: Msg) (state: State) : State * Cmd<Msg> =
+let rec update (msg: Msg) (state: State) : State * Cmd<Msg> =
     if isBlockedGesture state msg then
         state, Cmd.none
     else
-        let nextState, cmd = updateCore msg state
+        // RC-05 (docs/usecases/rc-05-bandeau-jaune-modal.md) : Échap et
+        // Entrée sont les équivalents clavier des boutons du bandeau.
+        // updateCore ne peut pas se rappeler lui-même, le routage vers
+        // l'action en attente vit donc ici — le message routé suit le
+        // chemin complet (garde + updateCore + éphémérisation du statut
+        // en plein écran), exactement comme un clic sur le bouton,
+        // quelle que soit sa formulation (« Déplacer », « Supprimer »).
+        match msg with
+        | EscapePressed when isQuestionPending state ->
+            match state.Screen with
+            | Confirming(Organizing, _) -> update OrganizeCancelled state
+            | Confirming(Triaging, _) -> update DeleteTandemCancelled state
+            | _ -> state, Cmd.none
+        | QuestionAccepted when isQuestionPending state ->
+            match state.Screen with
+            | Confirming(Organizing, _) -> update OrganizeConfirmed state
+            | Confirming(Triaging, _) -> update DeleteTandemConfirmed state
+            | _ -> state, Cmd.none
+        | _ ->
+            let nextState, cmd = updateCore msg state
 
-        let enteredFullscreenWithStatus =
-            nextState.DisplayMode = Fullscreen
-            && state.DisplayMode = Normal
-            && nextState.Status <> ""
+            let enteredFullscreenWithStatus =
+                nextState.DisplayMode = Fullscreen
+                && state.DisplayMode = Normal
+                && nextState.Status <> ""
 
-        let statusAppearedInFullscreen =
-            nextState.DisplayMode = Fullscreen
-            && nextState.Status <> ""
-            && nextState.Status <> state.Status
+            let statusAppearedInFullscreen =
+                nextState.DisplayMode = Fullscreen
+                && nextState.Status <> ""
+                && nextState.Status <> state.Status
 
-        if enteredFullscreenWithStatus || statusAppearedInFullscreen then
-            nextState, Cmd.batch [ cmd; autoHideStatusCmd ]
-        else
-            nextState, cmd
+            if enteredFullscreenWithStatus || statusAppearedInFullscreen then
+                nextState, Cmd.batch [ cmd; autoHideStatusCmd ]
+            else
+                nextState, cmd

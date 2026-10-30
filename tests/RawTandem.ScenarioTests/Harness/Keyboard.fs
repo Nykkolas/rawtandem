@@ -6,6 +6,7 @@ open System.Threading
 open Avalonia.Controls
 open Avalonia.FuncUI.Hosts
 open Avalonia.Headless
+open Avalonia.LogicalTree
 open RawTandem.UI.State
 open Harness.Headless
 
@@ -28,7 +29,11 @@ type internal KeyboardWindow =
       /// dispatchés par la subscription clavier, dans l'ordre.
       Press: Avalonia.Input.Key -> Msg list
       /// Remet la vue rendue à jour pour l'état donné.
-      Refresh: State -> unit }
+      Refresh: State -> unit
+      /// Donne le focus clavier au bouton portant ce libellé dans la vue
+      /// rendue (le geste Tab de l'utilisateur, rejoué directement — pour
+      /// les règles où le bouton focusé prime, ex. RC-05 Entrée).
+      Focus: string -> unit }
 
 /// Ouvre la fenêtre clavier headless pour l'état initial, joue le corps,
 /// puis referme tout (subscription, fenêtre) — le style `withPhotos` du
@@ -56,7 +61,11 @@ let internal withKeyboardWindow (initialState: State) (body: KeyboardWindow -> u
     onUi (
         Action(fun () ->
             let host = HostControl()
-            (host :> IViewHost).Update(Some(Main.view initialState ignore))
+            // La vue est câblée avec le collecteur comme dispatch — le
+            // programme réel, pas `ignore` : un bouton activé (focus +
+            // Entrée, ex. RC-05) dispatche son message dans le même flux
+            // que les touches, le test les traite via `step`.
+            (host :> IViewHost).Update(Some(Main.view initialState dispatched.Enqueue))
 
             let window = Window(Content = host)
             window.Show()
@@ -87,12 +96,37 @@ let internal withKeyboardWindow (initialState: State) (body: KeyboardWindow -> u
         drain ()
 
     let refresh (state: State) =
-        onUi (Action(fun () -> (hostRef.Value :> IViewHost).Update(Some(Main.view state ignore))))
+        onUi (
+            Action(fun () -> (hostRef.Value :> IViewHost).Update(Some(Main.view state dispatched.Enqueue)))
+        )
 
-    body { Press = press; Refresh = refresh }
+    let focus (label: string) =
+        onUi (
+            Action(fun () ->
+                let root = hostRef.Value.Content :?> Control
 
-    onUi (
-        Action(fun () ->
-            !disposables |> List.iter (fun (d: IDisposable) -> d.Dispose())
-            windowRef.Value.Close())
-    )
+                root.GetLogicalDescendants()
+                |> Seq.choose (fun d ->
+                    match d with
+                    | :? Button as b when string b.Content = label -> Some b
+                    | _ -> None)
+                |> Seq.tryHead
+                |> Option.iter (fun b -> b.Focus() |> ignore))
+        )
+
+    try
+        body { Press = press; Refresh = refresh; Focus = focus }
+    finally
+        // Même si le corps échoue (Expecto remonte l'exception), la fenêtre
+        // et la subscription sont refermées — sinon chaque test en échec
+        // laisse une fenêtre vivante sur la session headless.
+        onUi (
+            Action(fun () ->
+                // Le FocusManager est global à l'application : une fenêtre
+                // fermée avec un bouton focusé laisse ce bouton « actif »
+                // pour la suivante — Entrée activerait un fantôme. On rend
+                // le focus à la fenêtre avant de fermer.
+                windowRef.Value.Focus() |> ignore
+                !disposables |> List.iter (fun (d: IDisposable) -> d.Dispose())
+                windowRef.Value.Close())
+        )

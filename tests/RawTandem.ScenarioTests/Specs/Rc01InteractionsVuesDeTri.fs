@@ -101,7 +101,7 @@ let tests =
                 Expect.equal s1.CurrentIndex 1 "les flèches naviguent toujours"
 
                 // RC-01 : Echap → retour à l'affichage normal.
-                let sBack = s1 |> step FullscreenExitRequested
+                let sBack = s1 |> step EscapePressed
                 Expect.equal sBack.DisplayMode Normal "Echap : la photo quitte le plein écran"
 
                 // RC-01 : F11 et F basculent (même geste que le double-clic).
@@ -112,18 +112,17 @@ let tests =
 
                 // RC-01 : en plein écran, une confirmation s'affiche par-dessus
                 // l'image (RC-02 reste actif), et Echap ne quitte pas le plein
-                // écran tant qu'elle est présentée à l'utilisateur.
+                // écran tant qu'elle est présentée : il tranche la question
+                // (RC-05, refus) — le bandeau prime.
                 let sFull = sToggle |> step FullscreenRequested
                 let sDel = sFull |> step DeleteTandemRequested
                 Expect.equal sDel.Screen (Confirming(Triaging, DeleteTandem "P2")) "Suppr : la confirmation s'affiche par-dessus l'image"
-                let sEchap = sDel |> step FullscreenExitRequested
+                let sEchap = sDel |> step EscapePressed
+                Expect.equal sEchap.Screen (Working Triaging) "Echap : la question est refusée (RC-05)"
                 Expect.equal sEchap.DisplayMode Fullscreen "Echap ne quitte pas le plein écran pendant une confirmation"
-                Expect.equal sEchap.Screen (Confirming(Triaging, DeleteTandem "P2")) "la confirmation reste présentée"
 
                 // La question tranchée, Echap redevient actif.
-                let sCancelled = sEchap |> step DeleteTandemCancelled
-                Expect.equal sCancelled.Screen (Working Triaging) "la confirmation est annulée"
-                let sNormalAgain = sCancelled |> step FullscreenExitRequested
+                let sNormalAgain = sEchap |> step EscapePressed
                 Expect.equal sNormalAgain.DisplayMode Normal "Echap : retour à l'affichage normal")
         }
 

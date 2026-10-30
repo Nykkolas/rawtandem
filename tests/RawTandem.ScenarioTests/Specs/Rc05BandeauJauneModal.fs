@@ -35,16 +35,25 @@ open Harness.Keyboard
 /// d'une file ou d'un autre front sans fenêtre) ; les touches mappées pendant
 /// une question sont jouées en VRAIES touches sur la vraie fenêtre et la vraie
 /// vue (écrans de tri et d'organisation — le branchement clavier
-/// Main.keyboardSubscriptions est couvert ici, pas rejoué).
+/// Main.keyboardSubscriptions est couvert ici, pas rejoué) ; les raccourcis
+/// du bandeau (Échap refuse, Entrée accepte — bouton focusé prioritaire,
+/// cas plein écran RC-01) sont joués en vraies touches, le geste Tab du
+/// focus étant rejoué par le harnais (KeyboardWindow.Focus).
 ///
 /// Non couvert : le sélecteur natif de dossier, le focus OS réel d'un bureau.
 ///
 /// Les actions du bandeau (Déplacer/Supprimer, Annuler) sont exercées en
 /// permanence par les scénarios des UC.
 
+/// Les tests de cette règle sont **séquencés** (`testSequencedGroup`) : ils
+/// partagent l'unique FocusManager de l'application (global à la session
+/// headless) — en parallèle, la fenêtre d'un test volerait le focus posé
+/// par un autre. Le harnais Keyboard et le Focus explicite vivent ici.
 [<Tests>]
 let tests =
-    testList "RC-05 : bandeau jaune modal" [
+    testSequencedGroup
+        "RC-05 keyboard window"
+        (testList "RC-05 : bandeau jaune modal" [
 
         // ---------- Les boutons pendant une question ----------
 
@@ -257,9 +266,12 @@ let tests =
 
                     kb.Refresh confirming
 
-                    // Le cœur : chaque touche mappée, une à une, depuis le
-                    // même état Confirming — jamais l'une après l'autre,
-                    // sinon un garde manquant masquerait le suivant.
+                    // Le cœur : chaque touche mappée bloquée pendant une
+                    // question, une à une, depuis le même état Confirming —
+                    // jamais l'une après l'autre, sinon un garde manquant
+                    // masquerait le suivant. Échap et Entrée n'y sont pas :
+                    // ce sont des actions du bandeau (RC-05), elles tranchent
+                    // la question — leurs tests dédiés suivent.
                     let mappedKeys =
                         [ Key.Left
                           Key.Right
@@ -267,7 +279,6 @@ let tests =
                           Key.End
                           Key.F
                           Key.F11
-                          Key.Escape
                           Key.Delete
                           Key.F5 ]
 
@@ -394,9 +405,12 @@ let tests =
 
                     kb.Refresh confirming
 
-                    // Le cœur : chaque touche mappée, une à une, depuis le
-                    // même état Confirming — jamais l'une après l'autre,
-                    // sinon un garde manquant masquerait le suivant.
+                    // Le cœur : chaque touche mappée bloquée pendant une
+                    // question, une à une, depuis le même état Confirming —
+                    // jamais l'une après l'autre, sinon un garde manquant
+                    // masquerait le suivant. Échap et Entrée n'y sont pas :
+                    // ce sont des actions du bandeau (RC-05), elles tranchent
+                    // la question — leurs tests dédiés suivent.
                     let mappedKeys =
                         [ Key.Left
                           Key.Right
@@ -404,7 +418,6 @@ let tests =
                           Key.End
                           Key.F
                           Key.F11
-                          Key.Escape
                           Key.Delete
                           Key.F5 ]
 
@@ -478,5 +491,333 @@ let tests =
                         [ RescanRequested ]
                         "la vraie touche F5 dispatch Réanalyser après la réponse (raccourci réactivé)"))
         }
-    ]
+
+        // ---------- Les raccourcis du bandeau : Échap / Entrée ----------
+
+        /// RC-05, Échap (tri) : pendant la question de suppression, Échap
+        /// refuse — comme un clic sur « Annuler ». La question disparaît,
+        /// le rappel du refus s'affiche (RC-02), la photo est intacte.
+        /// Rouge aujourd'hui : Échap n'a pas encore ce rôle (no-op gardé).
+        test "RC-05 keyboard shortcut : Escape refuses the pending deletion question" {
+            withPhotos (fun photos ->
+                let s0 = init () |> fst |> step (FolderSelected photos)
+
+                Expect.equal s0.Screen (Working Triaging) "précondition : la vue de tri est affichée"
+
+                withKeyboardWindow s0 (fun kb ->
+                    let confirming = kb.Press Key.Delete |> List.fold (fun s m -> step m s) s0
+
+                    Expect.equal
+                        confirming.Screen
+                        (Confirming(Triaging, DeleteTandem "P1"))
+                        "précondition : la question de suppression est affichée"
+
+                    kb.Refresh confirming
+
+                    let answered = kb.Press Key.Escape |> List.fold (fun s m -> step m s) confirming
+
+                    Expect.equal
+                        answered.Screen
+                        (Working Triaging)
+                        "Échap refuse : retour au tri, la question disparaît"
+
+                    Expect.stringContains
+                        answered.Status
+                        "annulée"
+                        "le refus est rappelé dans la barre de statut (RC-02)"
+
+                    Expect.equal answered.CurrentIndex 0 "la photo refusée reste courante"
+
+                    Expect.isTrue
+                        (File.Exists(Path.Combine(photos, "P1.JPG")))
+                        "le JPG est intact"
+
+                    Expect.isTrue
+                        (File.Exists(Path.Combine(photos, "RAW", "P1.RW2")))
+                        "le RW2 est intact"))
+        }
+
+        /// RC-05, Échap (organisation) : pendant la question de rangement,
+        /// Échap refuse — comme « Annuler ». Miroir du tri.
+        test "RC-05 keyboard shortcut : Escape refuses the pending organizing question" {
+            withPellicule (fun pellicule ->
+                let s0 = init () |> fst |> step (FolderSelected pellicule)
+
+                let confirming = step OrganizeRequested s0
+
+                Expect.equal
+                    confirming.Screen
+                    (Confirming(Organizing, OrganizeFolder 3))
+                    "précondition : la question de rangement est affichée (3 RAW)"
+
+                withKeyboardWindow confirming (fun kb ->
+                    kb.Refresh confirming
+
+                    let answered = kb.Press Key.Escape |> List.fold (fun s m -> step m s) confirming
+
+                    Expect.equal
+                        answered.Screen
+                        (Working Organizing)
+                        "Échap refuse : retour à l'organisation, la question disparaît"
+
+                    Expect.stringContains
+                        answered.Status
+                        "annulée"
+                        "le refus est rappelé dans la barre de statut (RC-02)"
+
+                    Expect.isFalse
+                        (Directory.Exists(Path.Combine(pellicule, "RAW")))
+                        "aucun rangement n'a été lancé"
+
+                    for stem in [ "P1"; "P2"; "P3" ] do
+                        Expect.isTrue
+                            (File.Exists(Path.Combine(pellicule, stem + ".RW2")))
+                            (sprintf "%s.RW2 toujours à la racine" stem)))
+        }
+
+        /// RC-05, Entrée (tri) : pendant la question de suppression, Entrée
+        /// accepte — comme un clic sur « Supprimer ». Le couple part à la
+        /// corbeille (RC-03, vrai gio trash), le tandem quitte le tri.
+        test "RC-05 keyboard shortcut : Enter accepts the pending deletion question" {
+            withPhotos (fun photos ->
+                let s0 = init () |> fst |> step (FolderSelected photos)
+
+                Expect.equal s0.Screen (Working Triaging) "précondition : la vue de tri est affichée"
+
+                withKeyboardWindow s0 (fun kb ->
+                    let s1 = kb.Press Key.Right |> List.fold (fun s m -> step m s) s0
+
+                    let confirming = kb.Press Key.Delete |> List.fold (fun s m -> step m s) s1
+
+                    Expect.equal
+                        confirming.Screen
+                        (Confirming(Triaging, DeleteTandem "P2"))
+                        "précondition : la question de suppression est affichée sur P2"
+
+                    kb.Refresh confirming
+
+                    let answered = kb.Press Key.Enter |> List.fold (fun s m -> step m s) confirming
+
+                    Expect.equal
+                        answered.Screen
+                        (Working Triaging)
+                        "Entrée accepte : retour au tri, la question disparaît"
+
+                    Expect.equal
+                        (triableTandems answered).Length
+                        2
+                        "le tandem supprimé quitte le tri"
+
+                    Expect.isFalse
+                        (File.Exists(Path.Combine(photos, "P2.JPG")))
+                        "le JPG est parti à la corbeille"
+
+                    Expect.isFalse
+                        (File.Exists(Path.Combine(photos, "RAW", "P2.RW2")))
+                        "le RW2 est parti à la corbeille"
+
+                    // Le rappel RC-02 de la réussite s'affiche, puis la
+                    // cascade recharge la photo courante — fichier vide de
+                    // la fixture, son échec de décodage écrase le bandeau :
+                    // artefact connu (UC organiser-et-trier, « fichiers
+                    // vides, le chargement réel échoue »), le rappel du
+                    // refus, lui, ne subit pas d'écrasement (test Échap).
+                    ))
+        }
+
+        /// RC-05, Entrée (organisation) : pendant la question de rangement,
+        /// Entrée accepte — comme « Déplacer ». Le rangement s'exécute
+        /// (vol + rescan en cascade attendus par step). Miroir du tri.
+        test "RC-05 keyboard shortcut : Enter accepts the pending organizing question" {
+            withPellicule (fun pellicule ->
+                let s0 = init () |> fst |> step (FolderSelected pellicule)
+
+                let confirming = step OrganizeRequested s0
+
+                Expect.equal
+                    confirming.Screen
+                    (Confirming(Organizing, OrganizeFolder 3))
+                    "précondition : la question de rangement est affichée (3 RAW)"
+
+                withKeyboardWindow confirming (fun kb ->
+                    kb.Refresh confirming
+
+                    let answered = kb.Press Key.Enter |> List.fold (fun s m -> step m s) confirming
+
+                    Expect.equal
+                        answered.Screen
+                        (Working Triaging)
+                        "Entrée accepte : passage automatique au tri après le rangement (comme un clic sur Déplacer)"
+
+                    Expect.isTrue
+                        (Directory.Exists(Path.Combine(pellicule, "RAW")))
+                        "le dossier « RAW » est créé"
+
+                    for stem in [ "P1"; "P2"; "P3" ] do
+                        Expect.isTrue
+                            (File.Exists(Path.Combine(pellicule, "RAW", stem + ".RW2")))
+                            (sprintf "%s.RW2 rangé dans « RAW »" stem)
+
+                    Expect.equal
+                        (triableTandems answered).Length
+                        3
+                        "le rescan en cascade voit les 3 couples organisés (tri possible)"))
+        }
+
+        /// RC-05 + RC-01, Échap en plein écran : pendant une question
+        /// affichée par-dessus le plein écran, Échap tranche la question
+        /// SANS quitter le plein écran (le « sauf si » de RC-01).
+        test "RC-05 keyboard shortcut : Escape in fullscreen answers the question without leaving fullscreen" {
+            withPhotos (fun photos ->
+                let s0 = init () |> fst |> step (FolderSelected photos)
+
+                Expect.equal s0.Screen (Working Triaging) "précondition : la vue de tri est affichée"
+
+                withKeyboardWindow s0 (fun kb ->
+                    let s1 = kb.Press Key.F |> List.fold (fun s m -> step m s) s0
+
+                    Expect.equal s1.DisplayMode Fullscreen "précondition : la vue de tri est en plein écran"
+
+                    let confirming = kb.Press Key.Delete |> List.fold (fun s m -> step m s) s1
+
+                    Expect.equal
+                        confirming.Screen
+                        (Confirming(Triaging, DeleteTandem "P1"))
+                        "précondition : la question s'affiche par-dessus le plein écran"
+
+                    kb.Refresh confirming
+
+                    let answered = kb.Press Key.Escape |> List.fold (fun s m -> step m s) confirming
+
+                    Expect.equal
+                        answered.Screen
+                        (Working Triaging)
+                        "Échap refuse : la question disparaît"
+
+                    Expect.equal
+                        answered.DisplayMode
+                        Fullscreen
+                        "le plein écran est conservé (priorité question > sortie, RC-01)"
+
+                    // Pas d'assertion sur le statut : en plein écran il est
+                    // éphémère (RC-01, ~3 s puis StatusHidden) — la cascade
+                    // de step l'a déjà caché au moment de l'assertion.
+
+                    Expect.isTrue
+                        (File.Exists(Path.Combine(photos, "P1.JPG")))
+                        "le JPG est intact"))
+        }
+
+        /// RC-05, garde : hors question, Échap garde son rôle RC-01 (rien
+        /// hors plein écran) et Entrée ne fait rien. Vert aujourd'hui — il
+        /// verrouille le mapping futur : les messages de tranchage seront
+        /// des no-op hors question (garde dans update).
+        test "RC-05 keyboard shortcut : Enter and Escape have no effect without a pending question" {
+            withPhotos (fun photos ->
+                let s0 = init () |> fst |> step (FolderSelected photos)
+
+                Expect.equal s0.Screen (Working Triaging) "précondition : la vue de tri est affichée, sans question"
+
+                withKeyboardWindow s0 (fun kb ->
+                    kb.Refresh s0
+
+                    let attempt =
+                        (kb.Press Key.Enter) @ (kb.Press Key.Escape)
+                        |> List.fold (fun s m -> step m s) s0
+
+                    Expect.equal attempt.Screen s0.Screen "l'écran ne bouge pas"
+                    Expect.equal attempt.CurrentIndex s0.CurrentIndex "la photo courante ne bouge pas"
+                    Expect.equal attempt.Status s0.Status "le bandeau ne bouge pas"
+                    Expect.equal attempt.Scan s0.Scan "le scan ne bouge pas"))
+        }
+
+        /// RC-05, focus (tri) : si un bouton du bandeau a le focus, Entrée
+        /// active CE bouton — focus sur « Annuler », Entrée refuse. Le
+        /// geste Tab de l'utilisateur est rejoué par le harnais (Focus),
+        /// le tranchage reste en vraies touches.
+        test "RC-05 keyboard shortcut : Enter activates the focused Cancel button instead of accepting" {
+            withPhotos (fun photos ->
+                let s0 = init () |> fst |> step (FolderSelected photos)
+
+                withKeyboardWindow s0 (fun kb ->
+                    let confirming = kb.Press Key.Delete |> List.fold (fun s m -> step m s) s0
+
+                    Expect.equal
+                        confirming.Screen
+                        (Confirming(Triaging, DeleteTandem "P1"))
+                        "précondition : la question de suppression est affichée"
+
+                    kb.Refresh confirming
+                    kb.Focus "Annuler"
+
+                    let answered = kb.Press Key.Enter |> List.fold (fun s m -> step m s) confirming
+
+                    Expect.equal
+                        answered.Screen
+                        (Working Triaging)
+                        "Entrée active le bouton focusé : refus, retour au tri"
+
+                    Expect.stringContains
+                        answered.Status
+                        "annulée"
+                        "le refus est rappelé dans la barre de statut (RC-02)"
+
+                    Expect.isTrue
+                        (File.Exists(Path.Combine(photos, "P1.JPG")))
+                        "le JPG est intact (l'action n'a pas été acceptée par le raccourci)"
+
+                    Expect.isTrue
+                        (File.Exists(Path.Combine(photos, "RAW", "P1.RW2")))
+                        "le RW2 est intact"))
+        }
+
+        /// RC-05, focus (tri) : focus sur le bouton accepter, Entrée
+        /// exécute l'action UNE SEULE fois — le raccourci et le clic natif
+        /// du bouton focusé ne s'additionnent pas. Un double tranchage
+        /// laisserait une trace : la seconde suppression sur des fichiers
+        /// déjà partis échouerait dans le bandeau (statut en erreur).
+        test "RC-05 keyboard shortcut : Enter with the accept button focused executes the deletion exactly once" {
+            withPhotos (fun photos ->
+                let s0 = init () |> fst |> step (FolderSelected photos)
+
+                withKeyboardWindow s0 (fun kb ->
+                    let confirming = kb.Press Key.Delete |> List.fold (fun s m -> step m s) s0
+
+                    Expect.equal
+                        confirming.Screen
+                        (Confirming(Triaging, DeleteTandem "P1"))
+                        "précondition : la question de suppression est affichée"
+
+                    kb.Refresh confirming
+                    kb.Focus "Supprimer"
+
+                    let answered = kb.Press Key.Enter |> List.fold (fun s m -> step m s) confirming
+
+                    Expect.equal
+                        answered.Screen
+                        (Working Triaging)
+                        "Entrée active le bouton focusé : acceptation, retour au tri"
+
+                    Expect.equal
+                        (triableTandems answered).Length
+                        2
+                        "le tandem supprimé quitte le tri (une fois)"
+
+                    Expect.isFalse
+                        (File.Exists(Path.Combine(photos, "P1.JPG")))
+                        "le JPG est parti à la corbeille"
+
+                    Expect.isFalse
+                        (File.Exists(Path.Combine(photos, "RAW", "P1.RW2")))
+                        "le RW2 est parti à la corbeille"
+
+                    // Une seule exécution : le question consommée, un
+                    // éventuel second tranchage serait un no-op de garde
+                    // d'écran — et le rappel RC-02 de la réussite est
+                    // écrasé par l'échec de décodage du fichier vide de
+                    // la fixture (artefact documenté, cf. test Entrée
+                    // suppression).
+                    ))
+        }
+    ])
     

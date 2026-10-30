@@ -852,34 +852,36 @@ let stateTests =
                     Expect.equal state.DisplayMode Normal "retour à l'affichage normal"
                 }
 
-                test "FullscreenExitRequested leaves fullscreen" {
-                    let state = { triaging' () with DisplayMode = Fullscreen } |> update' FullscreenExitRequested
+                test "EscapePressed leaves fullscreen" {
+                    let state = { triaging' () with DisplayMode = Fullscreen } |> update' EscapePressed
                     Expect.equal state.DisplayMode Normal "affichage normal"
                 }
 
-                test "FullscreenExitRequested does nothing in the normal display" {
+                test "EscapePressed does nothing in the normal display" {
                     let expected = triaging' ()
-                    Expect.equal (expected |> update' FullscreenExitRequested) expected "déjà en affichage normal"
+                    Expect.equal (expected |> update' EscapePressed) expected "déjà en affichage normal"
                 }
 
                 test "fullscreen messages do nothing outside the Triaging screen" {
                     let expected = organizing' ()
                     Expect.equal (expected |> update' FullscreenRequested) expected "pas de plein écran hors du tri"
-                    Expect.equal (expected |> update' FullscreenExitRequested) expected "rien à quitter hors du tri"
+                    Expect.equal (expected |> update' EscapePressed) expected "rien à quitter hors du tri"
                 }
 
-                test "Echap does not leave fullscreen while a confirmation is pending" {
-                    // RC-01 : une confirmation présentée prime sur la sortie du
-                    // plein écran — F comme Echap n'ont aucun effet tant que la
-                    // question n'est pas tranchée.
+                test "Echap refuses the pending question and stays fullscreen while a confirmation is pending" {
+                    // RC-05 (docs/usecases/rc-05-bandeau-jaune-modal.md) : une
+                    // confirmation présentée prime sur le rôle RC-01 d'Échap —
+                    // il tranche la question (refus) sans quitter le plein
+                    // écran ; F, lui, n'a toujours aucun effet.
                     let state =
                         { triaging' () with DisplayMode = Fullscreen }
                         |> update' DeleteTandemRequested
 
                     Expect.equal state.Screen (Confirming(Triaging, DeleteTandem "P1")) "la confirmation est présentée"
-                    let after = state |> update' FullscreenExitRequested
-                    Expect.equal after.DisplayMode Fullscreen "on reste en plein écran"
-                    Expect.equal after.Screen state.Screen "la confirmation reste présentée"
+                    let after = state |> update' EscapePressed
+                    Expect.equal after.Screen (Working Triaging) "la question est refusée"
+                    Expect.equal after.DisplayMode Fullscreen "on reste en plein écran (le bandeau prime, RC-01)"
+                    Expect.stringContains after.Status "annulée" "le refus est rappelé (RC-02)"
                     Expect.equal (state |> update' FullscreenRequested) state "F non plus ne bascule pendant la confirmation"
                 }
 
