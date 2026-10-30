@@ -2,7 +2,11 @@
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
-    <OutputType>Exe</OutputType>
+    <!-- WinExe : pas de fenêtre console allouée par Windows au lancement de
+         l'exe publié (l'app est une GUI) — sans effet sous Linux. Avec Exe,
+         un double-clic ouvrait une console noire à côté de la fenêtre
+         (reproduit dans la recette Windows du 2026-10-30). -->
+    <OutputType>WinExe</OutputType>
     <UseAvalonia>true</UseAvalonia>
     <AvaloniaUseCompactAssembly>false</AvaloniaUseCompactAssembly>
     <!-- Icône de l'exe (Windows) ; la fenêtre charge Assets/icon.png au
