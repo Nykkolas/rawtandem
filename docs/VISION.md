@@ -16,8 +16,10 @@ Un trieur de photos qui considère chaque cliché comme **un couple JPG+RAW** :
 
 - **Visualiser les JPG** d'un dossier (jamais les RAW, trop lourds).
 - **Supprimer un couple** JPG+RAW en une seule manipulation (vers la corbeille OS, récupérable).
-- **Déplacer un couple** JPG+RAW en une seule manipulation (modalité à définir : destinations
-  nommées, sélection à la volée, ou destination fixe).
+- **Déplacer un couple** JPG+RAW en une seule manipulation — **hors 1.0** (choix produit arbitré le
+  2026-10-30 : la modalité reste à définir — destinations nommées, sélection à la volée, ou
+  destination fixe) ; l'organisation d'un dossier (les RAW appariés rangés dans `RAW/`) est
+  la promesse tenue de la 1.0.
 
 ## Décisions prises
 

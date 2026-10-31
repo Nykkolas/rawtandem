@@ -1,8 +1,9 @@
 # RawTandem
 
 Trieur de photos qui considère chaque cliché comme **un couple JPG+RAW** d'un seul geste :
-visualiser les JPG, supprimer ou déplacer le couple entier (le RAW `.RW2` rejoint le
-sous-dossier `RAW/`, jamais chargé en mémoire).
+visualiser les JPG, supprimer le couple entier (corbeille OS, récupérable) et organiser le
+dossier (le RAW `.RW2` rejoint le sous-dossier `RAW/`, jamais chargé en mémoire).
+Le déplacement des couples vers une destination choisie est prévu dans une version suivante.
 
 ![tests](https://github.com/Nykkolas/rawtandem/actions/workflows/tests.yml/badge.svg)
 ![coverage Core](https://raw.githubusercontent.com/Nykkolas/rawtandem/badges/coverage-core.svg)
